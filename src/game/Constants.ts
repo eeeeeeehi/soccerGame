@@ -1,0 +1,12 @@
+export const Constants = {
+  FIELD_WIDTH: 800,
+  FIELD_HEIGHT: 600,
+  PLAYER_RADIUS: 15,
+  BALL_RADIUS: 8,
+  PLAYER_SPEED: 4,
+  BALL_FRICTION: 0.98,
+  GOAL_WIDTH: 150,
+  TEAM_1_COLOR: '#3b82f6', // Blue
+  TEAM_2_COLOR: '#ef4444', // Red
+  GOAL_HEIGHT: 150,
+};
