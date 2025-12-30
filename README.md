@@ -1,4 +1,6 @@
 # soccerGame
+<img width="1775" height="893" alt="image" src="https://github.com/user-attachments/assets/e3f00d16-9402-4544-ba41-04c12ee3b14f" />
+
 このプロジェクトは、TypeScriptとHTML5 Canvasで作られた2Dアーケードサッカーゲームです。 現在のコードベースから読み取れるゲームの詳細は以下の通りです。
 
 1. ゲームの概要
