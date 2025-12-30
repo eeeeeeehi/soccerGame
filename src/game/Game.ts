@@ -90,16 +90,20 @@ export class Game {
     }
 
     checkGoal() {
+        // Goal detection
+        // Simple X check + Y range
         const inGoalRange = this.ball.position.y > (Constants.FIELD_HEIGHT - Constants.GOAL_HEIGHT) / 2 &&
             this.ball.position.y < (Constants.FIELD_HEIGHT + Constants.GOAL_HEIGHT) / 2;
 
-        if (this.ball.position.x < 0 && inGoalRange) {
+        if (this.ball.position.x < 5 && inGoalRange) { // < 5 to be sure it's in
             console.log("Goal Team 2!");
             this.score.p2++;
             this.state = 'GOAL';
             this.goalTimer = 0;
+            // Force ball out to avoid double triggers?
+            // Actually change state usually prevents update loop from calling checkGoal again if we guard it.
         }
-        if (this.ball.position.x > Constants.FIELD_WIDTH && inGoalRange) {
+        if (this.ball.position.x > Constants.FIELD_WIDTH - 5 && inGoalRange) {
             console.log("Goal Team 1!");
             this.score.p1++;
             this.state = 'GOAL';
@@ -114,6 +118,7 @@ export class Game {
         this.team1.reset();
         this.team2.reset();
 
+        // Optional: Swap sides? No, simple reset.
         this.state = 'KICKOFF';
     }
 

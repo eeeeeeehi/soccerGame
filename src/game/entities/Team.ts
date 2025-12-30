@@ -20,6 +20,9 @@ export class Team {
     initFormation_4_4_2() {
         this.players = [];
 
+        // Helper to get X based on side (Team 1 Left, Team 2 Right)
+        // Team 1 (Left): 0 -> 1
+        // Team 2 (Right): 1 -> 0
         const getX = (pct: number) => {
             return this.id === 1
                 ? pct * Constants.FIELD_WIDTH
@@ -33,26 +36,31 @@ export class Team {
             this.players.push(p);
         }
 
+        // GK
         add('GK', 0.05, 0.5);
-        add('DF', 0.2, 0.2);
-        add('DF', 0.2, 0.4);
-        add('DF', 0.2, 0.6);
-        add('DF', 0.2, 0.8);
-        add('MF', 0.45, 0.2);
-        add('MF', 0.45, 0.4);
-        add('MF', 0.45, 0.6);
-        add('MF', 0.45, 0.8);
-        add('FW', 0.7, 0.4);
-        add('FW', 0.7, 0.6);
+
+        // Defenders (4) - Arced line
+        add('DF', 0.15, 0.20);
+        add('DF', 0.12, 0.40); // CB slightly back
+        add('DF', 0.12, 0.60); // CB slightly back
+        add('DF', 0.15, 0.80);
+
+        // Midfielders (4) - Slightly advanced but in half
+        add('MF', 0.35, 0.15); // Wing
+        add('MF', 0.28, 0.35); // CM
+        add('MF', 0.28, 0.65); // CM
+        add('MF', 0.35, 0.85); // Wing
+
+        // Forwards (2) - Near center circle but not over
+        add('FW', 0.45, 0.45);
+        add('FW', 0.45, 0.55);
     }
 
-    // Updated update method: Needs Opponent Team for Marking logic
     update(ball: Ball, opponent: Team) {
-        // 1. Determine Possession / Game State
-        // Simple heuristic: If any of MY players is close to ball, we are "Attacking" (or loose ball fighting)
-        // Ideally we should check who actually "has" the ball, but proximity is fine for AI switch.
-        // Actually, let's define "Attacking" as: My team is closer to ball than opponent team's closest player?
-        // Or simpler: If I have a player within 50px, I am attacking.
+        // 1. Determine Attacking State
+        // Simple heuristic: Are we closer to the ball than the opponent?
+        // Or simply: Do we have possession?
+        // Let's use a "Team Distance" check for now.
 
         let myClosestDist = Infinity;
         let myClosestIdx = -1;
@@ -63,54 +71,69 @@ export class Team {
                 myClosestDist = dist;
                 myClosestIdx = i;
             }
-            p.isSelected = false;
+            p.isSelected = false; // Reset selection
         });
 
-        const isAttacking = myClosestDist < 100; // If we are somewhat close, act aggressive/supportive
+        // Determine if we are "Attacking" (Team has possession or advantage)
+        // For AI purposes, let's say if we are within 100px we are attacking/fighting for it.
+        // But for formation, if opponent has ball, we should compact.
+        // Let's look at ball velocity or last touch? simpler:
+        // Assume attacking if our closest player is closer than opponent's closest player?
+        // We don't have opponent data easily here without iterating them too.
+        // Let's pass "IsAttacking" as "Is closest player < 200px" for now (simple Aggression).
+        const isAttacking = myClosestDist < 200;
 
-        // 2. Assign Marking Targets (If Defending)
-        // For each of my players (except Chaser/GK), find closest opponent to mark
-        // Optimization: Could be heavy 11x11. Let's do simple role matching or distance.
-        // Simple distance for now.
+        // 2. Select Chaser / Player to Control
+        // The closest player is ALWAYS the chaser/controlled player.
+        // Exception: GK usually doesn't chase far.
+        // If closest is GK and ball is far, maybe 2nd closest? 
+        // For simplicity: Closest is chaser.
 
+        /* 
+           Crucial Check: If Human, we only select ONE. 
+           If AI, 'Chaser' is just the one pressing.
+        */
+
+        const chaserIdx = myClosestIdx;
+
+        // 3. Update Players
         this.players.forEach((p, i) => {
-            const isChaser = (i === myClosestIdx);
+            const isChaser = (i === chaserIdx);
 
-            // Human Control Logic
-            if (isChaser && this.isHuman) {
-                p.isSelected = true;
-            }
-
+            // Mark Target Logic (for Defenders)
+            // Ideally: Find opponent in my "Zone" or nearest opponent.
             let markTarget: Player | undefined = undefined;
-
             if (!isAttacking && !isChaser && p.role !== 'GK') {
-                // Find nearest opponent to mark
+                // Find closest opponent
                 let minDist = Infinity;
-                let nearestOpp = null;
-
-                // Optimization: Search only within reasonable range (e.g. 300px)
-                // to avoid defenders marking forwards who are miles away
-                for (const opp of opponent.players) {
+                opponent.players.forEach(opp => {
                     const d = p.position.dist(opp.position);
-                    if (d < 300 && d < minDist) {
+                    if (d < 300 && d < minDist) { // Range check
                         minDist = d;
-                        nearestOpp = opp;
+                        markTarget = opp;
                     }
-                }
-                if (nearestOpp) {
-                    markTarget = nearestOpp;
-                }
+                });
             }
 
-            p.update(ball, isChaser, isAttacking, markTarget);
+            if (isChaser) {
+                p.isSelected = true; // Visual indicator
+            }
+
+            // Pass Context
+            // Teammates: this.players
+            // Opponents: opponent.players
+            p.update(ball, isChaser, isAttacking, this.players, opponent.players, markTarget);
         });
 
-        // 3. Collisions
+        // 4. Collisions (Intra-team)
         for (let i = 0; i < this.players.length; i++) {
             for (let j = i + 1; j < this.players.length; j++) {
                 this.players[i].checkPlayerCollision(this.players[j]);
             }
         }
+
+        // 5. Bounds (Double check, though player handles it)
+        // Handled in Player.ts
     }
 
     draw(ctx: CanvasRenderingContext2D) {
@@ -129,6 +152,7 @@ export class Team {
         this.players.forEach(p => {
             p.setPos(p.homePos.x, p.homePos.y);
             p.velocity = new Vector2(0, 0);
+            p.state = 'IDLE';
         });
     }
 }

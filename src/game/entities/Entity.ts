@@ -13,7 +13,7 @@ export abstract class Entity {
         this.color = color;
     }
 
-    update(): void {
+    update(...args: any[]): void {
         this.position = this.position.add(this.velocity);
     }
 
