@@ -140,20 +140,23 @@ export class Game {
             if (this.switchTimer > 0) this.switchTimer--;
         }
 
-        // Handling Set Pieces (Simple Wait for Input)
+        // Handling Set Pieces
+        // We MUST run updates so AI can calculate/shoot
         if (['THROW_IN', 'CORNER_KICK', 'GOAL_KICK'].includes(this.state)) {
-            // Reposition players if needed (once)
-            // Just wait for pass/shoot to resume
-            if (this.input.isDown('Space') || this.input.isDown('KeyX') || this.input.isDown('KeyC')) {
+            this.ball.update();
+            // Pass isSetPiece = true (requires Team.update modification if not present)
+            // Assuming Team.update(ball, opp, isSetPiece)
+            this.team1.update(this.ball, this.team2, true);
+            this.team2.update(this.ball, this.team1, true);
+
+            this.camera.follow(this.ball.position);
+
+            // Transition to PLAYING if ball is kicked
+            if (this.ball.velocity.mag() > 0.5) {
                 this.state = 'PLAYING';
             }
-
-            // Allow some movement behind the ball? For simplicity, frozen until kick.
-            // Actually, let's allow the controlling player to aim.
-            // Just run update logic for the kicking team?
-            this.ball.velocity = new Vector2(0, 0); // Freeze ball
-            // Update team 1 so human can aim (if it's their turn)
-            if (this.setPieceTeamId === 1) {
+            // Also allow manual override (for Human)
+            if (this.input.isDown('Space') || this.input.isDown('KeyX') || this.input.isDown('KeyC')) {
                 // Pass isSetPiece = true to freeze movement but allow input (aiming/action)
                 this.team1.update(this.ball, this.team2, true);
             } else {
@@ -339,12 +342,19 @@ export class Game {
         // THROW IN: On line
         // GOAL KICK: In box
 
-        bestP.position = bestP.position.add(dir.mult(-15)); // Back up 15px
+        bestP.position = bestP.position.add(dir.mult(-5)); // Back up 5px (Close enough to have possession)
 
         // Force kicker selection if human
         if (teamId === 1) {
             team.players.forEach(p => p.isSelected = false);
             bestP.isSelected = true;
+            // Also force Human control
+            this.team1.setManualSelection(this.team1.players.indexOf(bestP));
+        } else {
+            // For AI, force owner and timer
+            this.ball.owner = bestP;
+            // Delay kick slightly
+            bestP.aiDecisionTimer = 60;
         }
     }
 

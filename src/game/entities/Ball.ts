@@ -1,6 +1,7 @@
 import { Entity } from './Entity';
 import { Constants } from '../Constants';
 import { Vector2 } from '../utils/Vector2';
+import type { Player } from './Player'; // Type-only import to prevent cycle
 
 export class Ball extends Entity {
     constructor(x: number, y: number) {
@@ -20,4 +21,5 @@ export class Ball extends Entity {
     }
 
     public lastTouch: number = 0;
+    public owner: Player | null = null;
 }

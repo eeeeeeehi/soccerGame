@@ -347,13 +347,18 @@ export class Player extends Entity {
 
         if (this.isDribbling) currentSpeed *= 0.8;
 
-        if (inputDir.y < 0) this.velocity.y -= currentSpeed;
-        if (inputDir.y > 0) this.velocity.y += currentSpeed;
-        if (inputDir.x < 0) this.velocity.x -= currentSpeed;
-        if (inputDir.x > 0) this.velocity.x += currentSpeed;
+        if (!isSetPiece) {
+            if (inputDir.y < 0) this.velocity.y -= currentSpeed;
+            if (inputDir.y > 0) this.velocity.y += currentSpeed;
+            if (inputDir.x < 0) this.velocity.x -= currentSpeed;
+            if (inputDir.x > 0) this.velocity.x += currentSpeed;
 
-        if (this.velocity.mag() > currentSpeed) {
-            this.velocity = this.velocity.normalize().mult(currentSpeed);
+            if (this.velocity.mag() > currentSpeed) {
+                this.velocity = this.velocity.normalize().mult(currentSpeed);
+            }
+        } else {
+            // Set Piece Aiming Mode: Stop movement, but InputDir is still read by pass/shoot
+            this.velocity = new Vector2(0, 0);
         }
     }
 
@@ -368,14 +373,8 @@ export class Player extends Entity {
 
         // SET PIECE LOGIC: If set piece is active, hold position (don't run back to formation)
         // EXCEPTION: The Taker (isChaser) must act.
-        if (isSetPiece && !isChaser) {
-            // Minimal adjustment or just hold?
-            // If we are too close to others, maybe spread? 
-            // For now, just HOLD to respect 'resetForSetPiece'
-            this.moveTo(this.position);
-            this.velocity = new Vector2(0, 0); // Kill drift
-            return;
-        }
+        // REMOVED SET PIECE HOLD: Allow players to move (mark/support) during set pieces.
+        // if (isSetPiece && !isChaser) { ... }
 
         // REMOVED "Nerf Reaction" block causing AI Freeze.
         // AI will now behave responsively.
@@ -395,10 +394,15 @@ export class Player extends Entity {
         // ============================
         if (isChaser && distToBall < this.radius + ball.radius + 15) {
 
+            // AI DELAY: Always count down when in possession
+            if (this.aiDecisionTimer > 0) {
+                this.aiDecisionTimer--;
+            }
+
             // SET PIECE EXECUTION (AI)
             if (isSetPiece) {
                 if (this.aiDecisionTimer <= 0) {
-                    this.aiDecisionTimer = 60; // Cooldown
+                    this.aiDecisionTimer = 60; // Cooldown (Wait after kick)
 
                     // Determine if Corner Kick (Near corner flags)
                     const isCorner = (this.position.x < 10 || this.position.x > Constants.FIELD_WIDTH - 10) &&
@@ -415,24 +419,15 @@ export class Player extends Entity {
                         this.pass(ball, 70, teammates, boxCenter, true);
                     } else {
                         // THROW IN / GOAL KICK -> Short/Medium Pass
-                        // Use simple pass logic (target closest)
                         this.pass(ball, 50, teammates, undefined, true);
                     }
                 }
                 return;
             }
 
-            // AI DELAY: Don't act instantly
-            if (this.aiDecisionTimer > 0) {
-                this.aiDecisionTimer--;
-                // Still chase ball/dribble, but don't pass/shoot yet
-            } else {
+            // NORMAL PLAY ACTION (Only if timer ready)
+            if (this.aiDecisionTimer <= 0) {
                 this.decideBallAction(ball, goalPos, teammates, opponents);
-                // Reset timer implies we acted (or tried)
-                // Or we set timer inside decideBallAction? 
-                // If we pass, we state is PASS.
-                // If we decide to keep dribbling?
-                // Let decideBallAction handle frequency.
             }
             return;
         } else {
@@ -966,6 +961,21 @@ export class Player extends Entity {
             // Dribble Logic
             // Dribble / Control Logic
             if (this.velocity.mag() > 0.1 || dist < physicalDist + 5) {
+
+                // SAFETY: Prevent AI from dribbling into own goal
+                const movingToOwnGoal = (this.teamId === 1 && this.velocity.x < -0.1) ||
+                    (this.teamId === 2 && this.velocity.x > 0.1);
+
+                if (!this.isHuman && movingToOwnGoal) {
+                    // Force Stop/Trap instead of Dribble
+                    ball.velocity = this.velocity.clone().mult(0.1); // Kill speed
+                    ball.lastTouch = this.teamId;
+                    // Don't set isDribbling to true? Or do?
+                    // If we set isDribbling, next frame AI sees possession.
+                    this.isDribbling = true;
+                    return;
+                }
+
                 // SPRINT DRIBBLE (KNOCK ON)
                 if (this.isSprinting && this.velocity.mag() > 0.1) {
                     // Kick ball slightly ahead (Knock On)

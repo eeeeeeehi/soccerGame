@@ -313,7 +313,7 @@ export class Team {
 
             // Pass Context
             // Teammates: this.players
-            // Opponents: opponent.players
+            // Opponents: opponentTeam.players
 
             p.isSelected = isChaser; // Restore selection visual
 
@@ -322,9 +322,9 @@ export class Team {
             let shouldFreeze = false;
             // manualSelectIndex is sync'd to chaserIdx in logic above (lines 285-303) usually.
             // But strict check:
-            if (isSetPiece && this.isHuman && isChaser) {
-                shouldFreeze = true;
-            }
+            // Do NOT freeze the Chaser(Taker) if it is Human during Set Piece.
+            // We want them to input commands (Pass/Shot).
+            // Logic removed: if (isSetPiece && this.isHuman && isChaser) { shouldFreeze = true; }
 
             p.update(ball, isChaser, isAttacking, this.players, opponent.players, shouldFreeze, isSetPiece);
         });
@@ -397,6 +397,13 @@ export class Team {
             }
             else if (type === 'CORNER_KICK') {
                 if (isAttacking) {
+                    // Reset State
+                    p.isChargingShot = false;
+                    p.shotPower = 0;
+                    p.isChargingPass = false;
+                    p.passPower = 0;
+                    p.velocity = new Vector2(0, 0);
+
                     if (isTaker) {
                         p.position = ballPos.clone(); // At Corner
                     } else {
@@ -428,6 +435,8 @@ export class Team {
                             // We can just iterate a counter or use player index to decide slot.
 
                             // Define 4 Target Zones relative to Goal Center
+                            const enemyGoalX = this.id === 1 ? Constants.FIELD_WIDTH : 0;
+                            const myGoalX = this.id === 1 ? 0 : Constants.FIELD_WIDTH;
                             const goalCenter = new Vector2(enemyGoalX, Constants.FIELD_HEIGHT / 2);
                             const attackDir = (this.id === 1 ? 1 : -1);
 
@@ -578,5 +587,10 @@ export class Team {
         }
 
         this.manualSelectIndex = targetIndex;
+    }
+    public setManualSelection(index: number) {
+        if (index >= 0 && index < this.players.length) {
+            this.manualSelectIndex = index;
+        }
     }
 }
