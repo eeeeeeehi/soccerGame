@@ -5,7 +5,7 @@ import { Team } from './entities/Team';
 import { Vector2 } from './utils/Vector2';
 import { Camera } from './Camera';
 
-type GameState = 'KICKOFF' | 'PLAYING' | 'GOAL' | 'THROW_IN' | 'CORNER_KICK' | 'GOAL_KICK';
+type GameState = 'KICKOFF' | 'PLAYING' | 'GOAL' | 'THROW_IN' | 'CORNER_KICK' | 'GOAL_KICK' | 'GAME_OVER';
 
 export class Game {
     private canvas: HTMLCanvasElement;
@@ -20,6 +20,12 @@ export class Game {
     private score: { p1: number, p2: number } = { p1: 0, p2: 0 };
     private goalTimer: number = 0;
 
+    // Match Timer
+    // 3 minutes real time = 90 minutes game time
+    // 60fps * 180s = 10800 frames
+    private maxMatchTime: number = 180 * 60;
+    private matchTimer: number = 180 * 60;
+
     // Set Piece Info
     private setPieceTeamId: number = 0;
     private setPieceTimer: number = 0;
@@ -28,13 +34,15 @@ export class Game {
 
     private camera: Camera;
 
+    private padding: number = 80; // Stadium border size
+
     constructor(containerId: string) {
         const container = document.getElementById(containerId);
         if (!container) throw new Error('Container not found');
 
         this.canvas = document.createElement('canvas');
-        this.canvas.width = Constants.FIELD_WIDTH;
-        this.canvas.height = Constants.FIELD_HEIGHT;
+        this.canvas.width = Constants.CANVAS_WIDTH;
+        this.canvas.height = Constants.CANVAS_HEIGHT;
         container.appendChild(this.canvas);
 
         this.canvas.style.backgroundColor = '#4ade80';
@@ -88,6 +96,48 @@ export class Game {
             // Camera follow
             this.camera.zoom = 1.2;
             this.camera.follow(this.ball.position);
+
+            // Toggle Help
+            if (this.input.isDown('Digit0') && this.helpToggleTimer <= 0) {
+                this.showHelp = !this.showHelp;
+                this.helpToggleTimer = 20; // Debounce
+            }
+            if (this.helpToggleTimer > 0) this.helpToggleTimer--;
+
+            // Manual Player Switch (S)
+            if (this.input.isDown('KeyS') && this.switchTimer <= 0) {
+                this.team1.switchPlayer(this.ball);
+                this.switchTimer = 20; // Debounce
+            }
+
+            // Space Switch (If too far to tackle)
+            if (this.input.isDown('Space') && this.switchTimer <= 0) {
+                const selected = this.team1.players[this.team1.manualSelectIndex];
+                if (selected) {
+                    // Check possession
+                    const distToBall = selected.position.dist(this.ball.position);
+                    const hasPossession = distToBall < selected.radius + this.ball.radius + 15;
+
+                    if (!hasPossession && !this.ball.owner) {
+                        // Loose ball situation
+                        // If far from ball, switch to closest
+                        // Tackle range ~50
+                        if (distToBall > 50) {
+                            this.team1.switchPlayer(this.ball);
+                            this.switchTimer = 20;
+                        }
+                    } else if (!hasPossession && this.ball.owner && this.ball.owner.teamId !== 1) {
+                        // Opponent has ball
+                        const distToCarrier = selected.position.dist(this.ball.owner.position);
+                        if (distToCarrier > 50) {
+                            // Too far to tackle, Switch!
+                            this.team1.switchPlayer(this.ball);
+                            this.switchTimer = 20;
+                        }
+                    }
+                }
+            }
+            if (this.switchTimer > 0) this.switchTimer--;
         }
 
         // Handling Set Pieces (Simple Wait for Input)
@@ -104,7 +154,8 @@ export class Game {
             this.ball.velocity = new Vector2(0, 0); // Freeze ball
             // Update team 1 so human can aim (if it's their turn)
             if (this.setPieceTeamId === 1) {
-                this.team1.update(this.ball, this.team2); // Updates rotation/aim but ball is frozen
+                // Pass isSetPiece = true to freeze movement but allow input (aiming/action)
+                this.team1.update(this.ball, this.team2, true);
             } else {
                 // AI Delay then kick
                 this.setPieceTimer++;
@@ -122,6 +173,38 @@ export class Game {
             this.goalTimer++;
             if (this.goalTimer > 180) { // Wait ~3 seconds (60fps)
                 this.resetKickoff();
+            }
+        }
+    }
+
+    resetKickoff(scoringTeamId: number = 2) {
+        this.state = 'KICKOFF';
+
+        // Reset positions
+        this.team1.initFormation();
+        this.team2.initFormation();
+
+        // Ball to Center
+        this.ball.position = new Vector2(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
+        this.ball.velocity = new Vector2(0, 0);
+        this.ball.owner = null;
+
+        // Give Possession to Team 1 (Requested by User)
+        // Or specific team if we want alternate kickoffs later.
+        // For now, force Team 1 FW.
+
+        const isTeam1Kickoff = true; // Always T1 for now per user? "Start with Blue having ball"
+
+        if (isTeam1Kickoff) {
+            const kicker = this.team1.players.find(p => p.role === 'FW');
+            if (kicker) {
+                // Pos slightly behind center? Or AT center.
+                kicker.position = new Vector2(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 + 10);
+                // Assign owner
+                this.ball.owner = kicker;
+                kicker.isDribbling = true;
+                // Force camera
+                this.camera.follow(this.ball.position);
             }
         }
     }
@@ -265,34 +348,159 @@ export class Game {
         }
     }
 
-    resetKickoff() {
-        this.ball.position = new Vector2(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
-        this.ball.velocity = new Vector2(0, 0);
-        this.ball.lastTouch = 0;
 
-        this.team1.reset();
-        this.team2.reset();
-
-        // Optional: Swap sides? No, simple reset.
-        this.state = 'KICKOFF';
-    }
 
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Apply Camera for World
+        // 1. Draw Sidebars (Background)
+        this.drawSidebars();
+
+        // 2. Draw Field (Centered/Offset)
+        this.ctx.save();
+        this.ctx.translate(Constants.SIDEBAR_WIDTH, 0);
+
+        // Apply Camera
         this.camera.apply(this.ctx);
 
         this.drawField();
 
         this.team1.draw(this.ctx);
         this.team2.draw(this.ctx);
-        this.ball.draw(this.ctx); // Draw ball last
+        this.ball.draw(this.ctx);
 
         this.camera.unapply(this.ctx);
 
-        // Draw UI (Static)
-        this.drawUI();
+        // Draw In-Game UI (Overlays like Goal Text)
+        this.drawGameOverlays(); // Renamed from drawUI to specific overlays
+
+        this.ctx.restore();
+    }
+
+    drawSidebars() {
+        const w = Constants.SIDEBAR_WIDTH;
+        const h = Constants.CANVAS_HEIGHT;
+
+        // LEFT BAR (Player Data)
+        this.ctx.fillStyle = '#1e293b'; // Dark Slate
+        this.ctx.fillRect(0, 0, w, h);
+
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = '20px Arial';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText("PLAYER DATA", w / 2, 30);
+
+        // Find selected player (Team 1)
+        const selected = this.team1.players.find(p => p.isSelected) || this.team1.players.find(p => p.isDribbling);
+
+        if (selected) {
+            this.ctx.textAlign = 'left';
+            this.ctx.font = '16px Arial';
+            let y = 80;
+            const x = 20;
+
+            this.ctx.fillText(`Name: ${selected.name}`, x, y); y += 30;
+            this.ctx.fillText(`Role: ${selected.role}`, x, y); y += 30;
+            this.ctx.fillText(`Stamina: ${Math.floor(selected.stamina)}`, x, y); y += 30;
+
+            // Bars
+            this.ctx.fillStyle = '#475569';
+            this.ctx.fillRect(x, y, 200, 10);
+            this.ctx.fillStyle = '#22c55e';
+            this.ctx.fillRect(x, y, 200 * (selected.stamina / 100), 10);
+            y += 30;
+
+            this.ctx.fillStyle = 'white';
+            this.ctx.fillText(`Speed: ${selected.stats.speed}`, x, y); y += 30;
+            this.ctx.fillText(`Kick: ${selected.stats.kickPower}`, x, y); y += 30;
+        }
+
+
+        // RIGHT BAR (Formation / Management)
+        this.ctx.fillStyle = '#1e293b';
+        this.ctx.fillRect(Constants.CANVAS_WIDTH - w, 0, w, h);
+
+        this.ctx.fillStyle = 'white';
+        this.ctx.textAlign = 'center';
+        this.ctx.font = '20px Arial';
+        this.ctx.fillText("TEAM MANAGEMENT", Constants.CANVAS_WIDTH - w / 2, 30);
+
+        // List Team 1 Players
+        this.ctx.textAlign = 'left';
+        this.ctx.font = '14px Arial';
+        let ry = 80;
+        const rx = Constants.CANVAS_WIDTH - w + 20;
+
+        this.team1.players.forEach(p => {
+            this.ctx.fillStyle = p.isSelected ? '#fbbf24' : 'white';
+            const status = p.stamina < 30 ? '(!)' : '';
+            this.ctx.fillText(`${p.role} ${p.name} ${status}`, rx, ry);
+
+            // Mini Stamina
+            this.ctx.fillStyle = p.stamina > 50 ? '#22c55e' : '#ef4444';
+            this.ctx.fillRect(rx + 120, ry - 10, 50 * (p.stamina / 100), 5);
+
+            ry += 25;
+        });
+    }
+
+    drawGameOverlays() {
+        // Renamed from drawUI, draws specific game text centered on field
+        this.ctx.font = '30px Arial';
+        this.ctx.fillStyle = 'white';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`${this.score.p1} - ${this.score.p2}`, Constants.FIELD_WIDTH / 2, 40);
+
+        if (this.state === 'GOAL') {
+            this.ctx.font = '60px Arial';
+            this.ctx.fillStyle = 'yellow';
+            this.ctx.fillText("GOAL!!!", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
+        }
+
+        if (this.state === 'KICKOFF') {
+            this.ctx.font = '20px Arial';
+            this.ctx.fillStyle = 'rgba(255,255,255,0.8)';
+            this.ctx.fillText("Press Arrow Keys or Space to Start", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 + 80);
+        }
+
+        if (['THROW_IN', 'CORNER_KICK', 'GOAL_KICK'].includes(this.state)) {
+            const text = this.state.replace('_', ' ');
+            const teamName = this.setPieceTeamId === 1 ? "BLUE" : "RED";
+            const color = this.setPieceTeamId === 1 ? "#3b82f6" : "#ef4444";
+
+            this.ctx.font = '40px Arial';
+            this.ctx.fillStyle = color;
+            this.ctx.fillText(`${text} (${teamName})`, Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 - 50);
+        }
+
+        if (this.showHelp) {
+            const x = 20;
+            const y = 20;
+            const w = 250;
+            const h = 220;
+
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            this.ctx.fillRect(x, y, w, h);
+
+            this.ctx.textAlign = 'left';
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = '16px monospace';
+
+            let ly = y + 25;
+            const lh = 22;
+            this.ctx.fillText("[0] Toggle Help", x + 10, ly); ly += lh;
+            this.ctx.fillText("Arrows: Move", x + 10, ly); ly += lh;
+            this.ctx.fillText("Space : Action", x + 10, ly); ly += lh;
+            this.ctx.fillText("      (Kick/Dash/Tackle)", x + 10, ly); ly += lh;
+            this.ctx.fillText("Shift : Sprint (Auto)", x + 10, ly); ly += lh;
+            this.ctx.fillText("S     : Switch Player", x + 10, ly); ly += lh;
+            this.ctx.fillText("D     : Squad Manager", x + 10, ly); ly += lh;
+        } else {
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            this.ctx.font = '14px monospace';
+            this.ctx.textAlign = 'left';
+            this.ctx.fillText("Press 0 for Help", 20, 30);
+        }
     }
 
     drawField() {
@@ -381,77 +589,9 @@ export class Game {
 
     private showHelp: boolean = true;
     private helpToggleTimer: number = 0;
-
-    drawUI() {
-        this.ctx.font = '30px Arial';
-        this.ctx.fillStyle = 'white';
-        this.ctx.textAlign = 'center';
-        this.ctx.fillText(`${this.score.p1} - ${this.score.p2}`, Constants.FIELD_WIDTH / 2, 40);
-
-        if (this.state === 'GOAL') {
-            this.ctx.font = '60px Arial';
-            this.ctx.fillStyle = 'yellow';
-            this.ctx.fillText("GOAL!!!", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
-        }
-
-        if (this.state === 'KICKOFF') {
-            this.ctx.font = '20px Arial';
-            this.ctx.fillStyle = 'rgba(255,255,255,0.8)';
-            this.ctx.fillText("Press Arrow Keys to Start", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 + 80);
-        }
-
-        if (['THROW_IN', 'CORNER_KICK', 'GOAL_KICK'].includes(this.state)) {
-            const text = this.state.replace('_', ' ');
-            const teamName = this.setPieceTeamId === 1 ? "BLUE" : "RED";
-            const color = this.setPieceTeamId === 1 ? "#3b82f6" : "#ef4444";
-
-            this.ctx.font = '40px Arial';
-            this.ctx.fillStyle = color;
-            this.ctx.fillText(`${text} (${teamName})`, Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 - 50);
-
-            this.ctx.font = '20px Arial';
-            this.ctx.fillStyle = 'white';
-            if (this.setPieceTeamId === 1) {
-                this.ctx.fillText("Press X or C to Pass/Shoot", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
-            } else {
-                this.ctx.fillText("Waiting for CPU...", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
-            }
-        }
-
-        // Toggle Help
-        if (this.input.isDown('Digit0') && this.helpToggleTimer <= 0) {
-            this.showHelp = !this.showHelp;
-            this.helpToggleTimer = 20; // Debounce
-        }
-        if (this.helpToggleTimer > 0) this.helpToggleTimer--;
-
-        if (this.showHelp) {
-            const x = 20;
-            const y = 20;
-            const w = 250;
-            const h = 220;
-
-            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-            this.ctx.fillRect(x, y, w, h);
-
-            this.ctx.textAlign = 'left';
-            this.ctx.fillStyle = '#ffffff';
-            this.ctx.font = '16px monospace';
-
-            let ly = y + 25;
-            const lh = 22;
-            this.ctx.fillText("[0] Toggle Help", x + 10, ly); ly += lh;
-            this.ctx.fillText("Arrows: Move", x + 10, ly); ly += lh;
-            this.ctx.fillText("Shift : Sprint", x + 10, ly); ly += lh;
-            this.ctx.fillText("Z     : Tackle", x + 10, ly); ly += lh;
-            this.ctx.fillText("Space : Shoot (Hold)", x + 10, ly); ly += lh;
-            this.ctx.fillText("X     : Pass", x + 10, ly); ly += lh;
-            this.ctx.fillText("C     : Through Ball", x + 10, ly); ly += lh;
-        } else {
-            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-            this.ctx.font = '14px monospace';
-            this.ctx.textAlign = 'left';
-            this.ctx.fillText("Press 0 for Help", 20, 30);
-        }
-    }
+    private switchTimer: number = 0;
 }
+
+
+
+

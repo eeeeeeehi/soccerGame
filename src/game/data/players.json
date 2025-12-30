@@ -2,170 +2,410 @@
     "teams": [
         {
             "id": 1,
-            "name": "Blue Lock",
+            "name": "Dream Team",
             "color": "#3b82f6"
         },
         {
             "id": 2,
-            "name": "Red Devils",
+            "name": "Legends",
             "color": "#ef4444"
         }
     ],
     "players": [
         {
             "teamId": 1,
-            "name": "Isagi",
-            "number": 11,
-            "role": "FW",
+            "name": "Courtois",
+            "number": 1,
+            "role": "GK",
             "stats": {
-                "speed": 85,
-                "kick_power": 80,
-                "stamina": 90,
-                "technique": 85
-            }
-        },
-        {
-            "teamId": 1,
-            "name": "Bachira",
-            "number": 8,
-            "role": "MF",
-            "stats": {
-                "speed": 88,
-                "kick_power": 75,
-                "stamina": 85,
-                "technique": 95
-            }
-        },
-        {
-            "teamId": 1,
-            "name": "Kunigami",
-            "number": 9,
-            "role": "FW",
-            "stats": {
-                "speed": 82,
-                "kick_power": 95,
-                "stamina": 88,
+                "speed": 65,
+                "kick_power": 85,
+                "stamina": 80,
                 "technique": 70
             }
         },
         {
             "teamId": 1,
-            "name": "Chigiri",
-            "number": 44,
-            "role": "MF",
+            "name": "Ederson",
+            "number": 31,
+            "role": "GK",
             "stats": {
-                "speed": 98,
-                "kick_power": 70,
+                "speed": 70,
+                "kick_power": 95,
                 "stamina": 80,
+                "technique": 85
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Van Dijk",
+            "number": 4,
+            "role": "DF",
+            "stats": {
+                "speed": 85,
+                "kick_power": 85,
+                "stamina": 90,
+                "technique": 80
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Rúben Dias",
+            "number": 3,
+            "role": "DF",
+            "stats": {
+                "speed": 80,
+                "kick_power": 82,
+                "stamina": 92,
+                "technique": 78
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Rüdiger",
+            "number": 22,
+            "role": "DF",
+            "stats": {
+                "speed": 92,
+                "kick_power": 80,
+                "stamina": 95,
                 "technique": 75
             }
         },
         {
             "teamId": 1,
-            "name": "Raichi",
-            "number": 4,
+            "name": "Saliba",
+            "number": 2,
             "role": "DF",
             "stats": {
-                "speed": 75,
-                "kick_power": 75,
-                "stamina": 99,
-                "technique": 60
+                "speed": 84,
+                "kick_power": 78,
+                "stamina": 88,
+                "technique": 80
             }
         },
         {
             "teamId": 1,
-            "name": "Gagamaru",
-            "number": 1,
-            "role": "GK",
+            "name": "Walker",
+            "number": 2,
+            "role": "DF",
             "stats": {
-                "speed": 70,
-                "kick_power": 80,
+                "speed": 95,
+                "kick_power": 85,
                 "stamina": 90,
-                "technique": 60
+                "technique": 75
             }
         },
         {
-            "teamId": 2,
-            "name": "Rin",
+            "teamId": 1,
+            "name": "T. Hernández",
+            "number": 19,
+            "role": "DF",
+            "stats": {
+                "speed": 96,
+                "kick_power": 82,
+                "stamina": 92,
+                "technique": 82
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Hakimi",
+            "number": 2,
+            "role": "DF",
+            "stats": {
+                "speed": 97,
+                "kick_power": 80,
+                "stamina": 94,
+                "technique": 85
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Davies",
+            "number": 19,
+            "role": "DF",
+            "stats": {
+                "speed": 98,
+                "kick_power": 78,
+                "stamina": 90,
+                "technique": 85
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "De Bruyne",
+            "number": 17,
+            "role": "MF",
+            "stats": {
+                "speed": 78,
+                "kick_power": 92,
+                "stamina": 85,
+                "technique": 98
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Bellingham",
+            "number": 5,
+            "role": "MF",
+            "stats": {
+                "speed": 85,
+                "kick_power": 88,
+                "stamina": 98,
+                "technique": 92
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Rodri",
+            "number": 16,
+            "role": "MF",
+            "stats": {
+                "speed": 72,
+                "kick_power": 85,
+                "stamina": 95,
+                "technique": 95
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Modric",
             "number": 10,
-            "role": "FW",
+            "role": "MF",
+            "stats": {
+                "speed": 75,
+                "kick_power": 80,
+                "stamina": 80,
+                "technique": 99
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Kroos",
+            "number": 8,
+            "role": "MF",
+            "stats": {
+                "speed": 60,
+                "kick_power": 90,
+                "stamina": 75,
+                "technique": 98
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Valverde",
+            "number": 15,
+            "role": "MF",
             "stats": {
                 "speed": 90,
-                "kick_power": 90,
-                "stamina": 90,
+                "kick_power": 92,
+                "stamina": 99,
+                "technique": 85
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Pedri",
+            "number": 8,
+            "role": "MF",
+            "stats": {
+                "speed": 80,
+                "kick_power": 75,
+                "stamina": 85,
+                "technique": 96
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "B. Fernandes",
+            "number": 8,
+            "role": "MF",
+            "stats": {
+                "speed": 75,
+                "kick_power": 88,
+                "stamina": 95,
                 "technique": 90
             }
         },
         {
-            "teamId": 2,
-            "name": "Barou",
-            "number": 13,
+            "teamId": 1,
+            "name": "Messi",
+            "number": 10,
             "role": "FW",
             "stats": {
-                "speed": 85,
-                "kick_power": 92,
-                "stamina": 85,
+                "speed": 80,
+                "kick_power": 90,
+                "stamina": 75,
+                "technique": 100
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Ronaldo",
+            "number": 7,
+            "role": "FW",
+            "stats": {
+                "speed": 82,
+                "kick_power": 98,
+                "stamina": 80,
+                "technique": 90
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Mbappé",
+            "number": 9,
+            "role": "FW",
+            "stats": {
+                "speed": 99,
+                "kick_power": 90,
+                "stamina": 90,
+                "technique": 92
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Haaland",
+            "number": 9,
+            "role": "FW",
+            "stats": {
+                "speed": 94,
+                "kick_power": 99,
+                "stamina": 90,
                 "technique": 80
             }
         },
         {
             "teamId": 2,
-            "name": "Nagi",
-            "number": 7,
-            "role": "MF",
+            "name": "Alisson",
+            "number": 1,
+            "role": "GK",
             "stats": {
-                "speed": 75,
-                "kick_power": 85,
-                "stamina": 70,
-                "technique": 99
-            }
-        },
-        {
-            "teamId": 2,
-            "name": "Reo",
-            "number": 14,
-            "role": "MF",
-            "stats": {
-                "speed": 85,
-                "kick_power": 85,
-                "stamina": 85,
+                "speed": 70,
+                "kick_power": 90,
+                "stamina": 80,
                 "technique": 85
             }
         },
         {
             "teamId": 2,
-            "name": "Aiku",
+            "name": "Marquinhos",
             "number": 5,
             "role": "DF",
             "stats": {
                 "speed": 82,
-                "kick_power": 80,
-                "stamina": 90,
+                "kick_power": 75,
+                "stamina": 88,
                 "technique": 80
             }
         },
         {
             "teamId": 2,
-            "name": "Aryu",
-            "number": 2,
+            "name": "Militão",
+            "number": 3,
             "role": "DF",
             "stats": {
-                "speed": 80,
-                "kick_power": 75,
+                "speed": 88,
+                "kick_power": 80,
                 "stamina": 88,
-                "technique": 70
+                "technique": 78
             }
         },
         {
             "teamId": 2,
-            "name": "Gen",
-            "number": 1,
-            "role": "GK",
+            "name": "Araújo",
+            "number": 4,
+            "role": "DF",
             "stats": {
-                "speed": 60,
+                "speed": 88,
+                "kick_power": 80,
+                "stamina": 85,
+                "technique": 75
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Robertson",
+            "number": 26,
+            "role": "DF",
+            "stats": {
+                "speed": 85,
+                "kick_power": 82,
+                "stamina": 95,
+                "technique": 82
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Kimmich",
+            "number": 6,
+            "role": "MF",
+            "stats": {
+                "speed": 75,
                 "kick_power": 85,
-                "stamina": 80,
-                "technique": 50
+                "stamina": 95,
+                "technique": 92
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Rice",
+            "number": 41,
+            "role": "MF",
+            "stats": {
+                "speed": 80,
+                "kick_power": 82,
+                "stamina": 96,
+                "technique": 88
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Saka",
+            "number": 7,
+            "role": "MF",
+            "stats": {
+                "speed": 90,
+                "kick_power": 85,
+                "stamina": 90,
+                "technique": 88
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Vinícius Jr",
+            "number": 7,
+            "role": "MF",
+            "stats": {
+                "speed": 98,
+                "kick_power": 85,
+                "stamina": 92,
+                "technique": 96
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Salah",
+            "number": 11,
+            "role": "FW",
+            "stats": {
+                "speed": 92,
+                "kick_power": 88,
+                "stamina": 85,
+                "technique": 90
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Kane",
+            "number": 9,
+            "role": "FW",
+            "stats": {
+                "speed": 75,
+                "kick_power": 95,
+                "stamina": 90,
+                "technique": 92
             }
         }
     ]

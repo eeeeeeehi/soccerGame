@@ -32,6 +32,7 @@ export class Player extends Entity {
     // Visuals
     selectionAnim: number = 0; // For pulse effect
     reactionTimer: number = 0; // For AI delay
+    public aiDecisionTimer: number = 0;
     // Modifiers
     isSprinting: boolean = false;
     isChargingShot: boolean = false;
@@ -50,8 +51,14 @@ export class Player extends Entity {
     slideTimer: number = 0;
     slideDir: Vector2 = new Vector2(0, 0);
 
+    // Dribble State
+    isDribbling: boolean = false;
+
     // Stats
     stats: PlayerStats;
+
+    public actionHoldTime: number = 0;
+    public actionBlockTimer: number = 0; // Fix missing property
 
     constructor(x: number, y: number, teamId: number, role: PlayerRole, isHuman: boolean = false, input: Input | null = null, stats?: PlayerStats) {
         const color = teamId === 1 ? Constants.TEAM_1_COLOR : Constants.TEAM_2_COLOR;
@@ -78,7 +85,7 @@ export class Player extends Entity {
     }
 
     // Update loop called by Team
-    update(ball: Ball, isChaser: boolean, isAttacking: boolean, teammates: Player[], opponents: Player[]): void {
+    update(ball: Ball, isChaser: boolean, isAttacking: boolean, teammates: Player[], opponents: Player[], shouldFreeze: boolean = false, isSetPiece: boolean = false): void {
         this.velocity = new Vector2(0, 0);
 
         // Update selection animation
@@ -90,6 +97,7 @@ export class Player extends Entity {
 
         // Count down reaction timer
         if (this.reactionTimer > 0) this.reactionTimer--;
+        if (this.actionBlockTimer > 0) this.actionBlockTimer--;
 
         // SLIDING LOGIC
         if (this.isSliding) {
@@ -112,93 +120,233 @@ export class Player extends Entity {
 
         // Magnetic Steal Logic (Defense / Loose Ball)
         // If close to ball and not possessing, snap towards it
-        const distToBall = this.position.dist(ball.position);
-        if (distToBall < 40 && distToBall > this.radius + ball.radius) {
-            // "Magnetic" pull - strongly encourage moving to ball center
-            const pullDir = ball.position.sub(this.position).normalize();
-            // Add extra velocity component
-            this.velocity = this.velocity.add(pullDir.mult(2.0));
+        // DISABLE for human controlled player to prevent "moving on its own"
+        // The condition `!this.isHuman || !this.isSelected` already prevents selected human players from being affected.
+        // To disable for *all* human players (selected or not), the condition should be `!this.isHuman`.
+        // However, the user's intent was to prevent the *player* from moving on its own.
+        // The current logic already prevents the *selected* human player from being pulled.
+        // If the user wants to disable it for *all* human players (even unselected ones),
+        // the condition would be `if (!this.isHuman) { ... }`.
+        // For now, based on the instruction "DISABLE for human controlled player to prevent 'moving on its own'",
+        // and the existing code, the most direct interpretation is to remove the block entirely if it's deemed
+        // to be causing issues for human players, or to adjust the condition.
+        // Given the previous thought process, the user wants to remove this "magnetic pull" for human players.
+        // The current condition `!this.isHuman || !this.isSelected` means:
+        // - If it's an AI player (`!this.isHuman` is true), apply pull.
+        // - If it's a human player (`!this.isHuman` is false) AND it's NOT selected (`!this.isSelected` is true), apply pull.
+        // This means unselected human players *do* get the pull.
+        // To disable for *all* human players, the condition should be `if (!this.isHuman) { ... }`.
+        // Let's apply that change.
+        if (!this.isHuman) { // Only apply magnetic pull to AI players
+            const distToBall = this.position.dist(ball.position);
+            if (distToBall < 40 && distToBall > this.radius + ball.radius) {
+                // "Magnetic" pull - strongly encourage moving to ball center
+                const pullDir = ball.position.sub(this.position).normalize();
+                // Add extra velocity component
+                this.velocity = this.velocity.add(pullDir.mult(2.0));
+            }
         }
+
+
+
+        // ... (existing logic)
 
         if (this.isHuman && this.isSelected && this.input) {
-            this.handleInput(ball, teammates);
+            this.handleInput(ball, teammates, opponents, shouldFreeze, isSetPiece);
         } else {
-            this.handleAI(ball, isChaser, isAttacking, teammates, opponents);
+            // AI Logic
+            this.handleAI(ball, isChaser, isAttacking, teammates, opponents, undefined, isSetPiece);
         }
 
+        // ...
+
+        // Reset dribble state before collision check re-evaluates it
+        this.isDribbling = false;
+
         super.update();
-        this.checkBounds();
+        this.checkBounds(shouldFreeze); // Use shouldFreeze as 'isSetPiece' context if appropriate?
+        // Actually checkBounds logic uses isSetPiece to relax bounds. 
+        // If shouldFreeze is true, it means we ARE set piece taker.
+        // But checkBounds might need the general 'isSetPiece' game state?
+        // For now, let's allow passing 'shouldFreeze' implies 'isSetPiece' for bound checking?
+        // Or we need both?
+        // Let's pass shouldFreeze as 'isSetPieceRelaxed' flag?
+        // Wait, checkBounds(isSetPiece) expects boolean.
+        // If we are set piece taker (shouldFreeze=true), we definitely want relaxed bounds.
+        // If we are NOT taker but it IS set piece, we also want relaxed bounds (receivers).
+        // Problem: 'shouldFreeze' is only true for Taker.
+        // So receivers get false.
+        // If receivers get false, they are constrained to field.
+        // That is fine. 
+        // Only Taker needs to go out of bounds (Throw in / Corner).
+
+        this.checkBounds(shouldFreeze);
         this.checkBallCollision(ball);
     }
 
-    handleInput(ball: Ball, teammates: Player[]): void {
-        if (!this.input) return;
+    handleInput(ball: Ball, teammates: Player[], opponents: Player[], shouldFreeze: boolean, isSetPiece: boolean = false): void {
+        if (!this.input || this.actionBlockTimer > 0) return; // Block input if timer active
 
-        // TACKLE (Z)
-        if (this.input?.isDown('KeyZ') && !this.isSliding && this.stamina > 20) {
-            this.startSlide();
+        const distToBall = this.position.dist(ball.position);
+        const hasPossession = distToBall < this.radius + ball.radius + 15;
+        const isAction = this.input.isDown('Space');
+        const isSprint = this.input.isDown('ShiftLeft') || this.input.isDown('ShiftRight');
+
+        // SPRINT LOGIC (Shift)
+        if (isSprint && this.stamina > 5) {
+            this.isSprinting = true;
+            this.stamina -= 0.5;
+        } else {
+            this.isSprinting = false;
         }
 
-        // CHARGING PASS (X)
-        if (this.input?.isDown('KeyX')) {
-            if (!this.isKeyHeld_X) {
-                this.isKeyHeld_X = true;
-                this.isChargingPass = true;
+        // MOVEMENT (Disabled during Set Pieces for Taker)
+        let inputDir = new Vector2(0, 0);
+        if (!isSetPiece) {
+            if (this.input.isDown('ArrowUp')) inputDir.y -= 1;
+            if (this.input.isDown('ArrowDown')) inputDir.y += 1;
+            if (this.input.isDown('ArrowLeft')) inputDir.x -= 1;
+            if (this.input.isDown('ArrowRight')) inputDir.x += 1;
+        } else {
+            // Allow rotation/aiming logic? Rotation is implicit in kick direction usually.
+            // For now, simple freeze.
+        }
+
+        // DEFENSE: TACKLE (Space Tap)
+        // Handled by Team.ts for "Switch First, Tackle Second" logic
+        // DEFENSE: TACKLE (Space Tap)
+        // Handled by Team.ts for "Switch First, Tackle Second" logic
+
+        // DEFENSE: TACKLE (Space Tap)
+        // CHECK: Is there an opponent with the ball OR an opponent close to the loose ball?
+        // We want to avoid sliding at empty space, but allow slicing at a dribbler who technically "lost" the ball for a frame.
+
+        // Find closest opponent to BALL (not me)
+        let closestOppToBall: Player | null = null;
+        let minDistToBall = 200; // Activation range
+
+        if (ball.owner && ball.owner !== this && ball.owner.teamId !== this.teamId) {
+            closestOppToBall = ball.owner;
+            minDistToBall = 0;
+        } else if (!ball.owner) {
+            // Check loose ball context
+            for (const opp of opponents) {
+                const d = opp.position.dist(ball.position);
+                if (d < minDistToBall) {
+                    minDistToBall = d;
+                    closestOppToBall = opp;
+                }
+            }
+        }
+
+        // Allow tackle if we have a valid target context
+        if (closestOppToBall && !hasPossession) {
+            // Allow tackle even with low stamina (but accuracy drops)
+            if (isAction && !this.isSliding && this.stamina > 5) {
+                // Determine tackle direction from input
+                let slideDir = inputDir.clone();
+                if (slideDir.mag() === 0 && this.velocity.mag() > 0) {
+                    slideDir = this.velocity.normalize();
+                }
+
+                // AIM ASSIST
+                // Always target the active opponent context
+                let assistTarget = closestOppToBall.position;
+
+                this.slide(slideDir, assistTarget);
+            }
+        } else if (!closestOppToBall && !hasPossession) {
+            // If completely safe/empty, reset charge if we were charging (rare in defense)
+            if (this.isChargingShot || this.isChargingPass) {
+                this.isChargingShot = false;
+                this.isChargingPass = false;
+                this.shotPower = 0;
                 this.passPower = 0;
             }
-            if (this.isChargingPass) {
-                this.passPower += 2.0;
-                if (this.passPower > 100) this.passPower = 100;
-            }
-        } else {
-            if (this.isKeyHeld_X) {
-                // RELEASED X -> PASS
-                this.isKeyHeld_X = false;
+        }
+
+        // OFFENSE: CHARGE & ACTION
+        if (ball.owner === this || hasPossession) {
+            // Fix: ensure we don't accidentally double-trigger if we just switched?
+            // Usually fine, but maybe verify we aren't "sliding" (which we check).
+
+            if (isAction) {
+                // CHARGING
+                if (!this.isChargingShot && !this.isChargingPass) {
+                    // Start Charging
+                    this.isChargingShot = true;
+                    this.shotPower = 0;
+                }
+
+                if (this.isChargingShot) {
+                    this.shotPower += 2.0; // Charge Rate
+                    if (this.shotPower > 100) this.shotPower = 100;
+                }
+            } else {
+                // RELEASED
+                if (this.isChargingShot) {
+                    // Execute Action based on Power
+                    // SET PIECE OVERRIDE: Always Pass on release
+                    if (this.shotPower < 30 || isSetPiece) {
+                        // TAP (< 30) -> PASS
+                        // TAP (< 30) -> PASS
+
+                        // AUTO CENTERING (CROSS) LOGIC
+                        // If on wing (near edge) and attacking, force pass to box center
+                        const isWing = Math.abs(this.position.y - Constants.FIELD_HEIGHT / 2) > 150;
+                        const isAttackingHalf = (this.teamId === 1 && this.position.x > Constants.FIELD_WIDTH / 2) || (this.teamId === 2 && this.position.x < Constants.FIELD_WIDTH / 2);
+
+                        let centerTarget: Vector2 | undefined = undefined;
+
+                        if (isWing && isAttackingHalf) {
+                            // Find teammate in the box
+                            const boxTop = Constants.FIELD_HEIGHT / 2 - 150;
+                            const boxBottom = Constants.FIELD_HEIGHT / 2 + 150;
+                            const enemyGoalX = this.teamId === 1 ? Constants.FIELD_WIDTH : 0;
+
+                            // Simple heuristic: Find teammate closest to penalty spot?
+                            const penaltySpot = new Vector2(this.teamId === 1 ? Constants.FIELD_WIDTH - 80 : 80, Constants.FIELD_HEIGHT / 2);
+
+                            let bestT = null;
+                            let minD = Infinity;
+
+                            teammates.forEach(tm => {
+                                if (tm === this) return;
+                                const d = tm.position.dist(penaltySpot);
+                                if (d < 200 && d < minD) {
+                                    minD = d;
+                                    bestT = tm;
+                                }
+                            });
+
+                            if (bestT) {
+                                centerTarget = (bestT as Player).position;
+                                console.log("Auto-Centering to", (bestT as Player).role);
+                            }
+                        }
+
+                        this.pass(ball, 45, teammates, centerTarget, true); // Always prioritize closest in Set Piece or Auto-Center
+                    } else {
+                        // HOLD (> 30) -> SHOOT 
+                        const goalPos = this.teamId === 1 ? new Vector2(Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2) : new Vector2(0, Constants.FIELD_HEIGHT / 2);
+                        this.shoot(ball, goalPos, this.shotPower);
+                    }
+
+                    this.isChargingShot = false;
+                    this.shotPower = 0;
+                }
                 this.isChargingPass = false;
-                this.state = 'PASS'; // Trigger pass in update logic
             }
         }
 
-        // CHARGING SHOT (Space)
-        if (this.input?.isDown('Space')) {
-            if (!this.isKeyHeld_Space) {
-                this.isKeyHeld_Space = true;
-                this.isChargingShot = true;
-                this.shotPower = 0;
-            }
-            if (this.isChargingShot) {
-                this.shotPower += 2.0;
-                if (this.shotPower > 100) this.shotPower = 100;
-            }
-        } else {
-            if (this.isKeyHeld_Space) {
-                // RELEASED SPACE -> SHOOT
-                this.isKeyHeld_Space = false;
-                this.isChargingShot = false;
-                this.state = 'SHOOT'; // Trigger shot in update logic
-            }
-        }
 
-        // Sprint Check
-        const canSprint = this.stamina > 5;
-        this.isSprinting = (this.input.isDown('ShiftLeft') || this.input.isDown('ShiftRight')) && canSprint;
+        // Apply Speed
+        const baseSpeed = Constants.PLAYER_SPEED + (this.stats.speed / 100) * 1.5;
+        const sprintMult = this.isSprinting ? 1.4 : 1.0;
+        let currentSpeed = baseSpeed * sprintMult;
 
-        if (this.isSprinting) this.stamina -= 1.0;
+        if (this.isDribbling) currentSpeed *= 0.8;
 
-        // Speed Mapping: 70 -> 3.0, 100 -> 4.5. Sprint -> * 1.5
-        const baseSpeed = 2.0 + (this.stats.speed / 100) * 2.0;
-        const sprintMult = this.isSprinting ? 1.5 : 1.0;
-        const currentSpeed = baseSpeed * sprintMult;
-
-        // Movement
-        // Calculate input direction explicitly for actions
-        let inputDir = new Vector2(0, 0);
-        if (this.input.isDown('ArrowUp')) inputDir.y -= 1;
-        if (this.input.isDown('ArrowDown')) inputDir.y += 1;
-        if (this.input.isDown('ArrowLeft')) inputDir.x -= 1;
-        if (this.input.isDown('ArrowRight')) inputDir.x += 1;
-
-        // Apply movement velocity
         if (inputDir.y < 0) this.velocity.y -= currentSpeed;
         if (inputDir.y > 0) this.velocity.y += currentSpeed;
         if (inputDir.x < 0) this.velocity.x -= currentSpeed;
@@ -207,94 +355,30 @@ export class Player extends Entity {
         if (this.velocity.mag() > currentSpeed) {
             this.velocity = this.velocity.normalize().mult(currentSpeed);
         }
-
-        // Actions
-        const distToBall = this.position.dist(ball.position);
-
-        // Relax possession check slightly for sprint Dribble logic which pushes ball further
-        // But for actions (pass/shoot), we still need to be close.
-        const hasPossession = distToBall < this.radius + ball.radius + 15;
-
-        // If charging, keep ball close
-        if (this.isChargingShot || this.isChargingPass) {
-            if (hasPossession) {
-                // Keep ball close, but allow player to move
-                // This is handled by checkBallCollision's dribble logic
-            } else {
-                // If we lose possession while charging, reset charge
-                this.isChargingShot = false;
-                this.isChargingPass = false;
-                this.shotPower = 0;
-                this.passPower = 0;
-                this.isKeyHeld_Space = false;
-                this.isKeyHeld_X = false;
-            }
-        }
-
-        // THROUGH BALL (C)
-        // Prioritize space ahead of teammate
-        if (this.input.isDown('KeyC')) {
-            // Simple logic: Find furthest forward teammate or one making a run
-            // For now, find teammate closest to goal but ahead of me
-            let candidates = teammates.filter(t => t !== this);
-            if (candidates.length > 0) {
-                // Pick best
-                // Metric: (Dist to Goal) inverted + (Forward Alignment)
-                // Let's just pick random forward player
-                const target = candidates[Math.floor(Math.random() * candidates.length)];
-                // Pass 150px ahead of them
-                const leadPos = target.position.add(new Vector2(150, 0));
-                if (this.teamId === 2) leadPos.x -= 300; // Reverse for team 2 (if playing as them)
-
-                this.pass(ball, 100, teammates); // Faster pass
-            }
-        }
-
-        // State Machine execution
-        switch (this.state) {
-            case 'IDLE':
-            case 'WAIT':
-            case 'RETURN':
-                // AI Movement logic is handled by Team.ts usually, but here is local micro-adjust
-                break;
-            case 'CHASE':
-                this.moveTo(ball.position);
-                break;
-            case 'DRIBBLE':
-                // Dribble towards goal or pass target
-                // Simply move to goal for basic AI
-                const goalPos = this.teamId === 1 ? new Vector2(Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2) : new Vector2(0, Constants.FIELD_HEIGHT / 2);
-                this.moveTo(goalPos);
-                break;
-            case 'SHOOT':
-                const targetGoal = this.teamId === 1 ? new Vector2(Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2) : new Vector2(0, Constants.FIELD_HEIGHT / 2);
-                this.shoot(ball, targetGoal, this.shotPower); // Use charged power
-                this.state = 'IDLE';
-                this.shotPower = 0; // Reset after shot
-                break;
-            case 'PASS':
-                // If human, use stored passPower and input direction
-                if (this.isHuman) {
-                    this.pass(ball, this.passPower, teammates);
-                } else {
-                    // AI Pass
-                    // Pick random teammate for now or simple logic
-                    // ...
-                }
-                this.state = 'IDLE';
-                this.passPower = 0; // Reset after pass
-                break;
-        }
     }
 
-    handleAI(ball: Ball, isChaser: boolean, isAttacking: boolean, teammates: Player[], opponents: Player[], markTarget?: Player): void {
+    // ... (Skipping middle of file updates to focus on end-of-file cleanup)
+
+    // REPLACING FROM LINE 1001 TO END (To clean up duplicates)
+
+
+
+    handleAI(ball: Ball, isChaser: boolean, isAttacking: boolean, teammates: Player[], opponents: Player[], markTarget?: Player, isSetPiece: boolean = false): void {
         // AI Logic Update
 
-        // 0. Nerf Reaction (Team 2 only)
-        if (this.teamId === 2 && this.reactionTimer > 0) {
-            this.velocity = this.velocity.mult(0.5);
+        // SET PIECE LOGIC: If set piece is active, hold position (don't run back to formation)
+        // EXCEPTION: The Taker (isChaser) must act.
+        if (isSetPiece && !isChaser) {
+            // Minimal adjustment or just hold?
+            // If we are too close to others, maybe spread? 
+            // For now, just HOLD to respect 'resetForSetPiece'
+            this.moveTo(this.position);
+            this.velocity = new Vector2(0, 0); // Kill drift
             return;
         }
+
+        // REMOVED "Nerf Reaction" block causing AI Freeze.
+        // AI will now behave responsively.
 
         const myGoalX = this.teamId === 1 ? 0 : Constants.FIELD_WIDTH;
         const enemyGoalX = this.teamId === 1 ? Constants.FIELD_WIDTH : 0;
@@ -306,9 +390,61 @@ export class Player extends Entity {
         // ============================
         // 1. BALL POSSESSION / ACTION
         // ============================
+        // ============================
+        // 1. BALL POSSESSION / ACTION
+        // ============================
         if (isChaser && distToBall < this.radius + ball.radius + 15) {
-            this.decideBallAction(ball, goalPos, teammates, opponents);
+
+            // SET PIECE EXECUTION (AI)
+            if (isSetPiece) {
+                if (this.aiDecisionTimer <= 0) {
+                    this.aiDecisionTimer = 60; // Cooldown
+
+                    // Determine if Corner Kick (Near corner flags)
+                    const isCorner = (this.position.x < 10 || this.position.x > Constants.FIELD_WIDTH - 10) &&
+                        (this.position.y < 10 || this.position.y > Constants.FIELD_HEIGHT - 10);
+
+                    if (isCorner) {
+                        // CROSS TO BOX
+                        const boxCenter = new Vector2(
+                            this.teamId === 1 ? Constants.FIELD_WIDTH - 120 : 120,
+                            Constants.FIELD_HEIGHT / 2
+                        );
+                        // Add some randomness
+                        boxCenter.y += (Math.random() - 0.5) * 100;
+                        this.pass(ball, 70, teammates, boxCenter, true);
+                    } else {
+                        // THROW IN / GOAL KICK -> Short/Medium Pass
+                        // Use simple pass logic (target closest)
+                        this.pass(ball, 50, teammates, undefined, true);
+                    }
+                }
+                return;
+            }
+
+            // AI DELAY: Don't act instantly
+            if (this.aiDecisionTimer > 0) {
+                this.aiDecisionTimer--;
+                // Still chase ball/dribble, but don't pass/shoot yet
+            } else {
+                this.decideBallAction(ball, goalPos, teammates, opponents);
+                // Reset timer implies we acted (or tried)
+                // Or we set timer inside decideBallAction? 
+                // If we pass, we state is PASS.
+                // If we decide to keep dribbling?
+                // Let decideBallAction handle frequency.
+            }
             return;
+        } else {
+            // Not in possession, keep timer ready? 
+            // Or slowly charge it? 
+            // Ideally reset to X when we LOSE ball or GAIN ball?
+            // If we just got ball, timer should be X.
+            // Actually, ball.lastTouch check handles "Just got ball".
+
+            // Simple: If I don't have ball, reset timer to Delay.
+            // So when I get ball, I must wait 30-40 frames.
+            this.aiDecisionTimer = 30 + Math.random() * 20;
         }
 
         // ============================
@@ -336,14 +472,27 @@ export class Player extends Entity {
                 this.moveTo(ball.position);
             } else {
                 // I am AHEAD of the ball (Bad!). If I run straight, I might kick it back.
-                // Circle around? Or move to approach spot first.
-                // If very close, approach spot might be weird.
 
-                if (distToBall < 50) {
-                    // Micro adjust: Move perpendicular to clear line of sight?
-                    // Just move to approach spot strongly
-                    this.moveTo(approachSpot);
+                if (distToBall < 60) {
+                    // VERY RISKY: I am close and in front.
+                    // DO NOT move to ball. Move AWAY/SIDEWAYS to clear the line.
+                    // Vector from Ball to Goal (Line of fire)
+                    const lineFire = goalPos.sub(ball.position).normalize();
+                    // Perpendicular
+                    const perp = new Vector2(-lineFire.y, lineFire.x);
+
+                    // Which side am I on?
+                    const toMe = this.position.sub(ball.position);
+                    if (toMe.dot(perp) < 0) {
+                        perp.x *= -1;
+                        perp.y *= -1;
+                    }
+
+                    // Move to the side
+                    const safeSpot = ball.position.add(perp.mult(50));
+                    this.moveTo(safeSpot);
                 } else {
+                    // Far enough to circle around
                     this.moveTo(approachSpot);
                 }
             }
@@ -353,12 +502,43 @@ export class Player extends Entity {
         // Auto-Chase Check (If loose ball and very close)
         // Only if no one else is closer? handled by Team really.
         this.checkAutoChase(ball);
-        if (this.state === 'CHASE') return; // State changed in checkAutoChase
+        if (this.state === 'CHASE') {
+            // If I decided to chase via auto-check, MOVE TO BALL!
+            // Reuse Chaser Logic? Or simple follow
+            this.moveTo(ball.position);
+
+            // AI TACKLE LOGIC
+            // Strictly ONLY for CPU (Team 2) or NON-HUMAN.
+            // User requested: "Only yellow circle person should tackle".
+            // So logic: If I am Human Team AI, NEVER tackle.
+            if (!this.isHuman) { // Was this.teamId === 2
+                // Let's enable for all AI controlled players
+
+                // Find carrier
+                const carrier = opponents.find(p => p.position.dist(ball.position) < 40);
+                if (carrier) {
+                    const dist = this.position.dist(carrier.position);
+                    if (dist < 80 && dist > 40) { // Slide range
+                        // Check alignment? Don't tackle if behind? (Foul?) No fouls yet.
+                        // Just Slide if cooldown ready
+                        // Random chance 5% per frame if in position
+                        if (Math.random() < 0.05 && this.stamina > 30) {
+                            // Aim at ball
+                            const toBall = ball.position.sub(this.position).normalize();
+                            this.slide(toBall);
+                            return;
+                        }
+                    }
+                }
+            }
+            return; // State changed in checkAutoChase, RETURN to prevent Formation Override
+        }
 
         // ============================
         // 3. GOALKEEPER LOGIC
         // ============================
         if (this.role === 'GK') {
+            // ... (Keep existing GK logic)
             // Stay in box. Follow Ball Y but clamped.
             const boxTop = Constants.FIELD_HEIGHT / 2 - 150;
             const boxBottom = Constants.FIELD_HEIGHT / 2 + 150;
@@ -384,90 +564,139 @@ export class Player extends Entity {
         // ============================
         // 4. FIELD PLAYER POSITIONING
         // ============================
+        // 1. TEAM SHIFTING (Compactness)
+        // Shift entire formation based on ball position (Horizontal mainly)
+        // REDUCED Shift to prevent sideline stacking (was 0.4)
+        const shiftX = (ball.position.x - Constants.FIELD_WIDTH / 2) * 0.25;
+        let dynamicPos = new Vector2(this.homePos.x + shiftX, this.homePos.y);
 
-        // Calculate Dynamic Home Position
-        // Shift base formation X based on Ball X
-        let dynamicPos = this.homePos.clone();
+        // Keep bounds
+        if (dynamicPos.x < 10) dynamicPos.x = 10;
+        if (dynamicPos.x > Constants.FIELD_WIDTH - 10) dynamicPos.x = Constants.FIELD_WIDTH - 10;
 
-        // Horizontal Shift (Compactness)
-        // If ball is at 0, Team 1 shifts back. If at Width, Team 1 shifts forward.
-        // Base homePos is 0..Width.
-        const center = Constants.FIELD_WIDTH / 2;
-        const ballOffset = ball.position.x - center;
+        // 4.1 Check for Teammate Possession
+        let carrier: Player | null = null;
+        let bestDist = 1000;
 
-        // Attacking team shifts forward, Defending shifts back
-        // But simpler: Everyone follows ball somewhat.
-        const shiftFactor = 0.6; // How much formation slides with ball
-
-        // Apply shift
-        dynamicPos.x += ballOffset * shiftFactor;
-
-        // Clamp to logical bounds (Don't run off field)
-        if (dynamicPos.x < 100) dynamicPos.x = 100;
-        if (dynamicPos.x > Constants.FIELD_WIDTH - 100) dynamicPos.x = Constants.FIELD_WIDTH - 100;
-
-        if (isAttacking) {
-            // ATTACK BEHAVIOR
-            // FW: Find space / Run deep
-            // MF: Support
-            if (this.role === 'FW') {
-                // Push high
-                dynamicPos.x += (this.teamId === 1 ? 150 : -150);
-                // Drift to ball Y slightly
-                dynamicPos.y = dynamicPos.y * 0.8 + ball.position.y * 0.2;
+        for (const tm of teammates) {
+            const d = tm.position.dist(ball.position);
+            if (d < 50 && d < bestDist) {
+                bestDist = d;
+                carrier = tm;
             }
-            else if (this.role === 'MF') {
-                // Support distance
-                dynamicPos.x += (this.teamId === 1 ? 50 : -50);
-            }
+        }
 
-            this.state = 'SUPPORT';
-            this.moveTo(dynamicPos);
+        if (carrier && carrier !== this) {
+            const distToCarrier = this.position.dist(carrier.position);
 
-        } else {
-            // DEFENSE BEHAVIOR
-            this.state = 'RETURN';
+            // PROXIMITY CHECK: Only nearby players actively support. Far players maintain formation.
+            // REDUCED Range (400 -> 250) to prevent overcrowding.
+            if (distToCarrier < 250 && distToCarrier > 100) {
+                this.state = 'SUPPORT';
 
-            // DF: MARKING LOGIC
-            // Find dangerous opponent nearby
-            if (this.role === 'DF' || this.role === 'MF') {
-                let bestTarget: Player | null = null;
-                let minThreat = Infinity;
+                // === ROLE SPECIFIC SUPPORT ===
+                // Maintain 4-4-2 Shape: Move relative to ASSIGNED SLOT (dynamicPos), not free roaming.
 
-                opponents.forEach(opp => {
-                    // Is this opponent in my "zone"?
-                    const dist = opp.position.dist(this.homePos); // Check vs my base zone
-                    if (dist < 250) {
-                        const d = opp.position.dist(myGoalPos);
-                        if (d < minThreat) {
-                            minThreat = d;
-                            bestTarget = opp;
-                        }
-                    }
-                });
+                if (this.role === 'FW') {
+                    // FW: Run Forward (make depth)
+                    const attackDir = this.teamId === 1 ? 1 : -1;
+                    // Move 100-200px forward of formation line
+                    dynamicPos.x += 150 * attackDir;
 
-                if (bestTarget) {
-                    // MARK: Position between Opponent and Goal
-                    // And slightly biased towards ball (cutting lane)
-                    // Simple "Goal Side" marking:
-                    const opp = (bestTarget as Player);
-                    const toGoal = myGoalPos.sub(opp.position).normalize();
-                    const markSpot = opp.position.add(toGoal.mult(40)); // 40px goal-side of opponent
-
-                    this.moveTo(markSpot);
-                    this.state = 'MARKING';
-                    return;
+                    // Slide slightly towards ball Y to offer angled pass, but don't cross field
+                    const yDiff = carrier.position.y - dynamicPos.y;
+                    dynamicPos.y += yDiff * 0.3; // Move 30% towards ball Y
                 }
-            }
+                else if (this.role === 'MF') {
+                    // MF: Support
+                    // Maintain good linking distance (approx 200px)
+                    const toBall = carrier.position.sub(dynamicPos);
+                    const currentDist = toBall.mag();
 
-            // If no mark, retreat to formation
+                    if (currentDist > 250) {
+                        // Move closer
+                        dynamicPos = dynamicPos.add(toBall.normalize().mult(50));
+                    } else if (currentDist < 150) {
+                        // Too close, give space
+                        dynamicPos = dynamicPos.sub(toBall.normalize().mult(50));
+                    }
+                }
+                else {
+                    // DF: Hold Line but cover depth
+                    // Drop back slightly if ball is close
+                    const attackDir = this.teamId === 1 ? 1 : -1;
+                    dynamicPos.x -= 50 * attackDir;
+                }
+            } else {
+                // Far away: Return to formation (Shifted)
+                // BUT FIRST: DEFENSIVE CUT (Shot Blocking)
+                // If opponent has ball and I am not chaser, but I am relatively close, 
+                // I should try to cut the passing/shooting lane to goal.
+                const ballOwner = ball.owner;
+                if (ballOwner && ballOwner.teamId !== this.teamId) {
+                    const distToOwner = this.position.dist(ballOwner.position);
+                    if (distToOwner < 350) {
+                        // I am nearby (but not chaser). Block route to goal.
+                        const myGoal = new Vector2(this.teamId === 1 ? 0 : Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2);
+                        const dirToGoal = myGoal.sub(ballOwner.position).normalize();
+                        // Stand 120px from carrier towards goal
+                        const blockSpot = ballOwner.position.add(dirToGoal.mult(120));
+
+                        this.moveTo(blockSpot);
+                        return;
+                    }
+                }
+
+                this.state = 'RETURN';
+                this.state = 'RETURN';
+                // Compress Y slightly
+                dynamicPos.y = (dynamicPos.y - Constants.FIELD_HEIGHT / 2) * 0.7 + Constants.FIELD_HEIGHT / 2;
+            }
+        } else {
+            // NO POSSESSION: Defense Shape
+            this.state = 'RETURN';
             // Compress Y
             dynamicPos.y = (dynamicPos.y - Constants.FIELD_HEIGHT / 2) * 0.6 + Constants.FIELD_HEIGHT / 2;
-            this.moveTo(dynamicPos);
         }
+
+        // 4.2 AVOIDANCE / SPACING (Don't clump)
+        teammates.forEach(tm => {
+            if (tm === this) return;
+            const d = this.position.dist(tm.position);
+            if (d < 120) { // Increased avoidance to 120px to prevent clumping
+                const push = this.position.sub(tm.position).normalize().mult(120 - d);
+                dynamicPos = dynamicPos.add(push);
+            }
+        });
+
+        // 4.3 BALL AVOIDANCE (Don't block teammate shots or run into dribbler)
+        const dist = this.position.dist(ball.position);
+        if (dist < 60 && !isChaser && carrier !== this) {
+            const away = this.position.sub(ball.position).normalize();
+            dynamicPos = dynamicPos.add(away.mult(50));
+        }
+
+        this.moveTo(dynamicPos);
     }
 
+
+
     decideBallAction(ball: Ball, goalPos: Vector2, teammates: Player[], opponents: Player[]) {
+        // Priority 0: GOALKEEPER CLEARANCE
+        if (this.role === 'GK') {
+            // If ball is dangerous (close to me or goal), just clear it.
+            // Shoot towards center field / away from goal
+            const clearTarget = new Vector2(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
+            // Add some randomness
+            clearTarget.y += (Math.random() - 0.5) * 500;
+
+            // Just kick it hard
+            this.shoot(ball, clearTarget, 100);
+            this.state = 'SHOOT';
+            this.reactionTimer = 60; // Long cooldown
+            return;
+        }
+
         // Priority 1: SHOOT
         // If close to goal and clear angle
         const distToGoal = this.position.dist(goalPos);
@@ -477,53 +706,100 @@ export class Player extends Entity {
             // Just shoot for now!
             // Aim at goal
 
-            // Kick!
-            // We need a way to 'kick' the ball. For now, we just set ball velocity high and separate it.
-            // But we are in 'update', so we change ball behavior.
-            // "Kick" means instant velocity change.
+            // BUT: If angle is bad or teammate is open, Pass might be better?
+            // "When passing inside penalty area, it kicks to goal" -> User wants PASS option.
 
-            // Check cooldown or random chance to not shoot instantly every frame
-            if (Math.random() < 0.05) {
-                this.shoot(ball, goalPos);
-                this.state = 'SHOOT';
-                // Reset reaction timer after action (cooldown)
-                if (this.teamId === 2) this.reactionTimer = 30 + Math.random() * 20;
-                return;
+            // If very close, Shoot.
+            if (distToGoal < 120) {
+                if (Math.random() < 0.05) {
+                    this.shoot(ball, goalPos);
+                    this.state = 'SHOOT';
+                    if (this.teamId === 2) this.reactionTimer = 30 + Math.random() * 20;
+                    return;
+                }
+            } else {
+                // In box but not point blank.
+                // 50% chance to look for pass first?
+                // Or just proceed to Pass Logic? 
+
+                // If we RETURN here, we never check pass.
+                // Let's ONLY return if we actually shoot.
+                // Increase Shoot chance if very good angle?
+
+                if (Math.random() < 0.03) { // Lower chance to force shoot from distance
+                    this.shoot(ball, goalPos);
+                    this.state = 'SHOOT';
+                    if (this.teamId === 2) this.reactionTimer = 30 + Math.random() * 20;
+                    return;
+                }
+
+                // Fallthrough allows Pass Logic to run! 
             }
         }
 
         // Priority 2: PASS
         // Find teammate closer to goal and open
-        // Simple: Find teammate with best score (dist to goal < my dist)
         let bestPassTarget: Player | null = null;
         let bestScore = -Infinity;
 
         teammates.forEach(tm => {
             if (tm === this) return;
-            // Metric: Closer to goal?
-            const tmDistGoal = tm.position.dist(goalPos);
-            const myDistGoal = distToGoal;
 
-            if (tmDistGoal < myDistGoal - 50) { // Significant gain
-                // Check if open (no opponent in path) - doing simple dot product or dist check
-                // let's just use distance gain for now
-                if (tmDistGoal < bestScore || bestScore === -Infinity) { // Actually we want MIN distance
-                    // wait, bestScore logic: we want smallest dist.
+            // 1. Must be closer to goal than me
+            const myDistGoal = this.position.dist(goalPos);
+            const tmDistGoal = tm.position.dist(goalPos);
+
+            // Forward progress gain
+            const gain = myDistGoal - tmDistGoal;
+
+            if (gain > 20) { // At least 20px gain
+                // 2. Check Line of Sight (Lane Open)
+                let laneOpen = true;
+                const toTm = tm.position.sub(this.position);
+                const passDist = toTm.mag();
+                const passDir = toTm.normalize();
+
+                // Simple raycast check against opponents
+                opponents.forEach(opp => {
+                    // dist from opp to line segment
+                    // Project opp relative pos onto passDir
+                    const toOpp = opp.position.sub(this.position);
+                    const dot = toOpp.dot(passDir); // distance along line
+
+                    if (dot > 0 && dot < passDist) {
+                        // Opponent is between start and end
+                        // Check perpendicular distance
+                        const projPoint = this.position.add(passDir.mult(dot));
+                        const perpDist = projPoint.dist(opp.position);
+                        if (perpDist < 30) { // 30px lane width
+                            laneOpen = false;
+                        }
+                    }
+                });
+
+                if (laneOpen) {
+                    // Score = Gain - Distance (penalize long passes slightly)
+                    const score = gain - (passDist * 0.2);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestPassTarget = tm;
+                    }
                 }
             }
         });
 
-        // Simpler Pass Logic: Pass to any FW if I am MF/DF
-        if (this.role !== 'FW') {
-            const fws = teammates.filter(t => t.role === 'FW');
-            if (fws.length > 0) {
-                // Pick random or closest
-                const target = fws[Math.floor(Math.random() * fws.length)];
-                if (Math.random() < 0.02) {
-                    this.pass(ball, 80, teammates); // AI pass power
-                    this.state = 'PASS';
-                    return;
-                }
+        // Decision: Pass vs Dribble
+        // If we found a good target, high chance to pass
+        if (bestPassTarget) {
+            // MF passes more often than FW
+            const passChance = this.role === 'MF' ? 0.8 : 0.4;
+
+            if (Math.random() < passChance) {
+                this.pass(ball, 60, teammates); // Reduced speed (was 85)
+                this.state = 'PASS';
+                // AI Cooldown
+                if (this.teamId === 2) this.reactionTimer = 40;
+                return;
             }
         }
 
@@ -538,32 +814,47 @@ export class Player extends Entity {
     }
 
     checkAutoChase(ball: Ball) {
-        // If I am not the selected chaser (handled in Team), I usually return/wait.
-        // BUT, if the ball is VERY close to me (loose ball), I should react even if not selected.
-
-        if (this.state === 'IDLE' || this.state === 'WAIT' || this.state === 'RETURN' || this.state === 'SUPPORT') {
-            const dist = this.position.dist(ball.position);
-            const reactionRange = 150; // 150px awareness
-
-            if (dist < reactionRange) {
-                // Simple check: Is ball moving towards me or slow?
-                // For now, just chase if close.
-                this.state = 'CHASE';
-            }
-        }
+        // Disabled to prevent Swarm behavior.
     }
 
-    startSlide(): void {
+    slide(dir?: Vector2, target?: Vector2): void {
+        if (this.isSliding) return;
+
         this.isSliding = true;
         this.slideTimer = 30; // 0.5s slide
         this.stamina -= 20; // Cost
 
         // Slide Direction: Input Dir OR Current Facing (Velocity)
-        let slideVec = new Vector2(0, 0);
-        if (this.input?.isDown('ArrowUp')) slideVec.y -= 1;
-        if (this.input?.isDown('ArrowDown')) slideVec.y += 1;
-        if (this.input?.isDown('ArrowLeft')) slideVec.x -= 1;
-        if (this.input?.isDown('ArrowRight')) slideVec.x += 1;
+        let slideVec = dir ? dir.clone() : new Vector2(0, 0);
+
+        // If dir is not provided or empty, check input (Human fallback)
+        if (!dir && this.input) {
+            if (this.input?.isDown('ArrowUp')) slideVec.y -= 1;
+            if (this.input?.isDown('ArrowDown')) slideVec.y += 1;
+            if (this.input?.isDown('ArrowLeft')) slideVec.x -= 1;
+            if (this.input?.isDown('ArrowRight')) slideVec.x += 1;
+        }
+
+        // AIM ASSIST: If target provided (from auto-tackle), bias towards it
+        if (target) {
+            const toTarget = target.sub(this.position).normalize();
+            // If input is neutral, use target entirely.
+            if (slideVec.mag() === 0) {
+                slideVec = toTarget;
+            } else {
+                // DYNAMIC AIM ASSIST based on STAMINA
+                // High Stamina (80+) -> High Assist (0.8)
+                // Low Stamina (10) -> Low Assist (0.2)
+
+                // Map stamina 0-100 to factor 0.1-0.9
+                const staminaFactor = Math.max(0, Math.min(this.stamina, 100)) / 100;
+                // Base assist 0.1, Max 0.9
+                const assistStrength = 0.1 + (staminaFactor * 0.8);
+
+                // Blend
+                slideVec = slideVec.normalize().mult(1 - assistStrength).add(toTarget.mult(assistStrength)).normalize();
+            }
+        }
 
         if (slideVec.mag() === 0 && this.velocity.mag() > 0) {
             slideVec = this.velocity.normalize();
@@ -573,7 +864,7 @@ export class Player extends Entity {
             slideVec.x = 1; // Default right
         }
         this.slideDir = slideVec;
-        this.velocity = this.slideDir.mult(6.0); // Burst
+        this.velocity = this.slideDir.mult(8.0); // Faster Burst (was 6.0)
     }
 
     moveTo(target: Vector2): void {
@@ -586,8 +877,10 @@ export class Player extends Entity {
         const dir = target.sub(this.position).normalize();
 
         // Speed modulation
-        const baseSpeed = 2.0 + (this.stats.speed / 100) * 2.0;
+        const baseSpeed = Constants.PLAYER_SPEED + (this.stats.speed / 100) * 1.5;
         let speed = baseSpeed;
+
+        if (this.isDribbling) speed *= 0.7;
 
         // Human logic handled in handleInput
         // AI speeds
@@ -608,7 +901,14 @@ export class Player extends Entity {
         this.position = new Vector2(x, y);
     }
 
-    checkBounds(): void {
+    checkBounds(isSetPiece: boolean = false): void {
+        const padding = isSetPiece ? -20 : 0; // Allow being 20px out if set piece
+        // Actually, if set piece, we might WANT them out.
+        // Relax bounds completely or clamp to "Outside" range?
+        // Just relax for now so resetForSetPiece can place them outside without snap back.
+
+        if (isSetPiece) return; // Strict disable of bounds check for taker (or just relax)
+
         if (this.position.x - this.radius < 0) this.position.x = this.radius;
         if (this.position.x + this.radius > Constants.FIELD_WIDTH) this.position.x = Constants.FIELD_WIDTH - this.radius;
         if (this.position.y - this.radius < 0) this.position.y = this.radius;
@@ -620,7 +920,9 @@ export class Player extends Entity {
 
         // SLIDING TACKLE HIT
         if (this.isSliding) {
-            const range = this.radius + ball.radius + 10;
+            // WIDER HITBOX for sliding (Aim assist for physics)
+            // Radius(10) + Ball(6) + Buffer(15 -> 25)
+            const range = this.radius + ball.radius + 25;
             if (dist < range) {
                 ball.lastTouch = this.teamId; // TRACK TOUCH
                 // BIG KICK
@@ -640,48 +942,55 @@ export class Player extends Entity {
         // 1. Dribble Control Logic
         if (dist < controlDist) {
             // Static or Loose Ball Check
-            // If ball is fast, ignore
-            if (ball.velocity.mag() > 10) {
-                if (dist < physicalDist) {
-                    // Elastic bounce
-                    const pushDir = ball.position.sub(this.position).normalize();
-                    const overlap = physicalDist - dist;
-                    ball.position = ball.position.add(pushDir.mult(overlap));
+            // If ball is moving (Pass/Shoot), Try to TRAP it
+            if (ball.velocity.mag() > 3) {
+                // Trap Radius: Slightly wider than physical to "reach" for it
+                if (dist < physicalDist + 8) {
+                    // TRAP LOGIC: Cushion the ball
+
+                    // 1. Kill ball velocity (match player)
+                    ball.velocity = this.velocity.clone().mult(0.5);
+
+                    // 2. Position ball slightly in front/at feet
+                    const trapDir = ball.velocity.mag() > 0 ? ball.velocity.normalize() : new Vector2(1, 0);
+                    ball.position = this.position.add(trapDir.mult(physicalDist + 2));
+
+                    // 3. Mark as dribbling immediately
+                    this.isDribbling = true;
+                    ball.lastTouch = this.teamId;
                 }
+                // If fast but not close enough yet, let it come closer (Return to skip bounce)
                 return;
             }
 
             // Dribble Logic
-            if (this.velocity.mag() > 0.1) {
+            // Dribble / Control Logic
+            if (this.velocity.mag() > 0.1 || dist < physicalDist + 5) {
                 // SPRINT DRIBBLE (KNOCK ON)
-                if (this.isSprinting) {
-                    // Kick ball far ahead
-                    // No magnet. Just heavy impact.
+                if (this.isSprinting && this.velocity.mag() > 0.1) {
+                    // Kick ball slightly ahead (Knock On)
+                    const knockSpeed = this.velocity.mag() * 1.3;
                     const kickDir = this.velocity.normalize();
-                    // Knock distance ~ 60px ahead
-                    const knockSpeed = this.velocity.mag() * 1.8;
 
                     ball.velocity = kickDir.mult(knockSpeed);
-
-                    // Push out to avoid immediate re-collision
-                    ball.position = this.position.add(kickDir.mult(physicalDist + 5));
+                    ball.lastTouch = this.teamId;
+                    ball.position = this.position.add(kickDir.mult(physicalDist + 2));
                     return;
                 }
 
-                // NORMAL STICKY DRIBBLE
-                // "Magnet" - Pull ball to ideal position in front of player
-                const dribbleSpeed = this.velocity.mag() * 1.1; // Slightly faster to stay ahead
+                // NORMAL STICKY DRIBBLE / STATIC CONTROL
+                this.isDribbling = true;
+                ball.lastTouch = this.teamId;
 
-                // Ideal position: Exactly in front of current velocity
-                const idealDir = this.velocity.normalize();
-                const idealPos = this.position.add(idealDir.mult(physicalDist + 2)); // 2px gap
+                const dribbleSpeed = this.velocity.mag() * 1.1;
+                // Ideal position: Exactly in front of current velocity (or facing if still)
+                const idealDir = this.velocity.mag() > 0 ? this.velocity.normalize() : new Vector2(1, 0); // Default right if still
+                // If input exists, use input dir?
 
-                // Lerp ball position towards ideal position for smoothness, but strong enough to catch
-                // If dist is large (turning), snap harder
-                const snapFactor = 0.3;
+                const idealPos = this.position.add(idealDir.mult(physicalDist + 2));
 
-                // Set Velocity: Match player direction + speed
-                // This ensures if we stop next frame, ball still has momentum
+                const snapFactor = 0.6;
+
                 ball.velocity = idealDir.mult(dribbleSpeed);
 
                 // Adjust Position
@@ -695,7 +1004,7 @@ export class Player extends Entity {
                     ball.position = this.position.add(pushDir.mult(physicalDist));
                 }
 
-                return; // Controlled, skip default collision
+                return;
             }
         }
 
@@ -736,6 +1045,14 @@ export class Player extends Entity {
             const ringRadius = this.radius + 8 + Math.sin(this.selectionAnim * 4) * 2;
             ctx.ellipse(this.position.x, this.position.y + this.radius - 5, ringRadius, ringRadius * 0.6, 0, 0, Math.PI * 2);
             ctx.stroke();
+        }
+
+        // Draw Player Name
+        if (this.name) {
+            ctx.font = 'bold 14px Arial';
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.fillText(this.name, this.position.x, this.position.y - this.radius - 25);
         }
 
         // Draw Player
@@ -822,7 +1139,7 @@ export class Player extends Entity {
         ball.position = ball.position.add(ball.velocity.mult(2));
     }
 
-    pass(ball: Ball, power: number, teammates: Player[]) {
+    pass(ball: Ball, power: number, teammates: Player[], forceTarget?: Vector2, prioritizeClosest: boolean = false) {
         // Smart Targeting
         let inputDir = new Vector2(0, 0);
         if (this.input) {
@@ -832,31 +1149,50 @@ export class Player extends Entity {
             if (this.input.isDown('ArrowRight')) inputDir.x += 1;
         }
 
-        if (inputDir.mag() === 0) {
-            inputDir = this.velocity.mag() > 0 ? this.velocity.normalize() : (this.teamId === 1 ? new Vector2(1, 0) : new Vector2(-1, 0));
+        if (forceTarget) {
+            inputDir = forceTarget.sub(this.position).normalize();
         } else {
-            inputDir = inputDir.normalize();
+            if (inputDir.mag() === 0) {
+                inputDir = this.velocity.mag() > 0 ? this.velocity.normalize() : (this.teamId === 1 ? new Vector2(1, 0) : new Vector2(-1, 0));
+            } else {
+                inputDir = inputDir.normalize();
+            }
         }
 
         let bestTarget: Player | null = null;
         let maxScore = -Infinity;
 
-        teammates.forEach(tm => {
-            if (tm === this) return;
-            const toTeammate = tm.position.sub(this.position);
-            const dist = toTeammate.mag();
-            const dir = toTeammate.normalize();
-
-            const angleScore = inputDir.dot(dir);
-
-            if (angleScore > 0.5) {
-                const score = angleScore * 1000 - dist;
-                if (score > maxScore) {
-                    maxScore = score;
+        if (prioritizeClosest) {
+            // SHORT PASS MODE (Set Piece / Neutral Tap)
+            // Find absolute closest teammate
+            let minD = Infinity;
+            teammates.forEach(tm => {
+                if (tm === this) return;
+                const d = tm.position.dist(this.position);
+                if (d < minD && d < 300) { // Within reasonable range
+                    minD = d;
                     bestTarget = tm;
                 }
-            }
-        });
+            });
+        } else {
+            // NORMAL MODE (Smart Target)
+            teammates.forEach(tm => {
+                if (tm === this) return;
+                const toTeammate = tm.position.sub(this.position);
+                const dist = toTeammate.mag();
+                const dir = toTeammate.normalize();
+
+                const angleScore = inputDir.dot(dir);
+
+                if (angleScore > 0.5) {
+                    const score = angleScore * 1000 - dist;
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestTarget = tm;
+                    }
+                }
+            });
+        }
 
         let kickDir = inputDir;
         if (bestTarget) {
@@ -866,5 +1202,125 @@ export class Player extends Entity {
         const speed = 8 + (power / 100) * 17;
         ball.velocity = kickDir.mult(speed);
         ball.position = ball.position.add(ball.velocity.mult(2));
+    }
+
+    getDynamicPosition(ball: Ball, teammates: Player[], opponents: Player[]): Vector2 {
+        // Base: Formation Home (Shifted by Ball X for compactness)
+        // Shift less for FW, more for DF to keep lines compact
+        const shiftFactor = this.role === 'FW' ? 0.3 : (this.role === 'MF' ? 0.5 : 0.6);
+        const shiftX = (ball.position.x - Constants.FIELD_WIDTH / 2) * shiftFactor;
+
+        let target = new Vector2(this.homePos.x + shiftX, this.homePos.y);
+
+        // ROLE SPECIFIC LOGIC
+        const isAttacking = (ball.lastTouch === this.teamId);
+
+        // Bounds Clamp (Horizontal)
+        // Bounds Clamp (Horizontal)
+        if (target.x < 10) target.x = 10;
+        if (target.x > Constants.FIELD_WIDTH - 10) target.x = Constants.FIELD_WIDTH - 10;
+
+        // === DANGER ZONE OVERRIDE (Scramble) ===
+        // If ball is very close to goal (attacking or defending), ignore formation and SCRAMBLE.
+        // This prevents players from walking away after a corner.
+        const goalDist1 = ball.position.dist(new Vector2(0, Constants.FIELD_HEIGHT / 2));
+        const goalDist2 = ball.position.dist(new Vector2(Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2));
+        const isDanger = (goalDist1 < 350 || goalDist2 < 350);
+
+        if (isDanger) {
+            // If I am near the ball, stay involved!
+            const distToBall = this.position.dist(ball.position);
+            if (distToBall < 300) {
+                // SCRAMBLE MODE
+                if (isAttacking) {
+                    // Attackers: Converge on ball/goal
+                    // Move towards ball, but keep spacing
+                    const toBall = ball.position.sub(this.position);
+                    target = this.position.add(toBall.mult(0.6)); // Move 60% towards ball
+                } else {
+                    // Defenders: Man Mark or Block Goal
+                    // Simple: Bias towards goal-side of ball
+                    const myGoalX = this.teamId === 1 ? 0 : Constants.FIELD_WIDTH;
+                    const goalPos = new Vector2(myGoalX, Constants.FIELD_HEIGHT / 2);
+
+                    // If I am closest to ball, PRESS
+                    // Else cover
+                    target = this.position.add(ball.position.sub(this.position).mult(0.5));
+                    // Drag target towards goal line slightly (Block shot)
+                    const toGoal = goalPos.sub(target).normalize();
+                    target = target.add(toGoal.mult(20));
+                }
+                return target; // OVERRIDE FORMATION
+            }
+        }
+
+        // ROLE SPECIFIC LOGIC
+        // isAttacking already defined above
+
+        if (this.role === 'DF' && !isAttacking) {
+            // DEFENDER MARKING
+            let minD = 300; // Zoning Radius
+            let nearestOpp: Player | null = null;
+
+            opponents.forEach(opp => {
+                const d = opp.position.dist(target);
+                if (d < minD) { minD = d; nearestOpp = opp; }
+            });
+
+            if (nearestOpp) {
+                const myGoalX = this.teamId === 1 ? 0 : Constants.FIELD_WIDTH;
+                const goalPos = new Vector2(myGoalX, Constants.FIELD_HEIGHT / 2);
+
+                const oppToGoal = goalPos.sub((nearestOpp as Player).position).normalize();
+                target = (nearestOpp as Player).position.add(oppToGoal.mult(50));
+            }
+        }
+        else if (this.role === 'FW') {
+            if (isAttacking) {
+                const distToBall = this.position.dist(ball.position);
+                if (distToBall > 400) {
+                    const toBall = ball.position.sub(target);
+                    target = target.add(toBall.mult(0.2));
+                } else {
+                    const attackDir = this.teamId === 1 ? 1 : -1;
+                    target.x += 100 * attackDir;
+                }
+            }
+        }
+        else if (this.role === 'MF') {
+            if (isAttacking) {
+                const isSide = Math.abs(this.homePos.y - Constants.FIELD_HEIGHT / 2) > 150;
+                if (isSide) {
+                    // Stay wide? Maybe slightly in
+                } else {
+                    const ballY = ball.position.y;
+                    target.y = this.homePos.y + (ballY - this.homePos.y) * 0.3;
+                }
+            } else {
+                const isSide = Math.abs(this.homePos.y - Constants.FIELD_HEIGHT / 2) > 150;
+                if (isSide) {
+                    const centerY = Constants.FIELD_HEIGHT / 2;
+                    target.y = this.homePos.y + (centerY - this.homePos.y) * 0.3;
+                }
+            }
+        }
+
+        return target;
+    }
+
+
+
+    executeSmartKick(ball: Ball, teammates: Player[]) {
+        const goalPos = this.teamId === 1 ? new Vector2(Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2) : new Vector2(0, Constants.FIELD_HEIGHT / 2);
+        const distToGoal = this.position.dist(goalPos);
+
+        // 1. Shoot if close
+        if (distToGoal < 350) {
+            // Charge shot max
+            this.shoot(ball, goalPos, 100);
+        } else {
+            // 2. Pass (Auto Target)
+            this.pass(ball, 85, teammates);
+        }
     }
 }

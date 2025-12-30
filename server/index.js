@@ -40,6 +40,7 @@ app.get('/api/players', (req, res) => {
         console.log("Raw DB Results:", results);
 
         const formatted = results.map(row => ({
+            id: row.id,
             teamId: row.team_id || row.teamId, // Handle both snake/camel if needed
             name: String(row.name),
             number: row.number,
@@ -53,6 +54,41 @@ app.get('/api/players', (req, res) => {
         }));
 
         res.json({ players: formatted });
+    });
+});
+
+// Add Player
+app.post('/api/players', (req, res) => {
+    const { teamId, name, number, role, stats } = req.body;
+
+    // Validation
+    if (!name || !role) {
+        return res.status(400).json({ error: "Name and Role are required" });
+    }
+
+    const query = `
+        INSERT INTO players 
+        (team_id, name, number, position, speed, kick_power, stamina, technique) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+        teamId || 1,
+        name,
+        number || 0,
+        role,
+        stats?.speed || 50,
+        stats?.kickPower || 50,
+        stats?.stamina || 50,
+        stats?.technique || 50
+    ];
+
+    pool.query(query, values, (err, result) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).json({ error: err.message });
+        }
+        res.json({ message: "Player registered!", id: result.insertId });
     });
 });
 

@@ -9,7 +9,305 @@
 
 <body>
   <div id="app"></div>
+
+  <!-- Management Dashboard -->
+  <div id="regModal" style="display: none;">
+    <div class="modal-header">
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('squad')">Squad Management</button>
+        <button class="tab-btn" onclick="switchTab('reg')">Register New</button>
+      </div>
+      <div>
+        <h2 style="display:inline; margin-right:20px;">Team Manager</h2>
+        <button onclick="closeModal()"
+          style="padding:5px 10px; background:#444; border:none; color:white; cursor:pointer;">X</button>
+      </div>
+    </div>
+
+    <div class="modal-content">
+
+      <!-- Squad Tab -->
+      <div id="tab-squad" class="tab-pane active">
+        <div class="controls">
+          <select id="formationSelect" onchange="updatePitchLayout()">
+            <option value="4-4-2">4-4-2</option>
+            <option value="4-3-3">4-3-3</option>
+            <option value="3-5-2">3-5-2</option>
+          </select>
+          <button onclick="saveSquad()"
+            style="background:#00b894; color:white; border:none; padding:5px 15px; border-radius:4px; font-weight:bold;">Save
+            & Apply</button>
+          <button onclick="clearSquad()"
+            style="background:#d63031; color:white; border:none; padding:5px 15px; border-radius:4px;">Clear
+            Lineup</button>
+        </div>
+
+        <div class="squad-layout">
+          <div class="left-panel">
+            <div class="player-pool" id="playerPoolList">
+              <!-- Loaded via JS -->
+              <div style="color:#888; text-align:center;">Loading...</div>
+            </div>
+            <div id="playerDetails" class="player-details">
+              <h4 style="color:#ddd; margin-bottom:10px; border-bottom:1px solid #555; padding-bottom:5px;">Player Info
+              </h4>
+              <div id="detailContent" style="font-size:13px; color:#aaa;">Select a player...</div>
+            </div>
+          </div>
+
+          <div class="pitch-container" id="pitchContainer">
+            <!-- Slots generated via JS -->
+          </div>
+        </div>
+        <div style="margin-top:5px; color:#aaa; font-size:12px;">
+          Select a player from the left list or click a pitch position to view details.
+        </div>
+      </div>
+
+      <!-- Register Tab -->
+      <div id="tab-reg" class="tab-pane">
+        <form id="regForm">
+          <h3>Add New Player</h3>
+          <label>Name: <input type="text" name="name" required placeholder="Player Name"></label>
+
+          <label>Team:
+            <select name="teamId">
+              <option value="1">Team 1 (My Team)</option>
+            </select>
+          </label>
+
+          <label>Role:
+            <select name="role">
+              <option value="FW">Forward</option>
+              <option value="MF">Midfielder</option>
+              <option value="DF">Defender</option>
+              <option value="GK">Goalkeeper</option>
+            </select>
+          </label>
+
+          <label>Number: <input type="number" name="number" value="10" min="1" max="99"></label>
+
+          <div style="border-top:1px solid #555; margin:10px 0; padding-top:5px;">
+            <small>Stats (0-100)</small>
+            <label>Speed: <input type="number" name="speed" value="70" min="0" max="100"></label>
+            <label>Kick Power: <input type="number" name="kickPower" value="70" min="0" max="100"></label>
+            <label>Stamina: <input type="number" name="stamina" value="70" min="0" max="100"></label>
+            <label>Technique: <input type="number" name="technique" value="70" min="0" max="100"></label>
+          </div>
+
+          <button type="submit" style="width:100%; padding:10px; background:#0984e3; color:white; border:none;">Register
+            Player</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
+  <script>
+    // Formations Data (Duplicate of server/Formations.ts because this is raw HTML script)
+    const UIFormations = {
+      '4-4-2': [
+        { role: 'GK', x: 0.05, y: 0.5 },
+        { role: 'DF', x: 0.15, y: 0.20 }, { role: 'DF', x: 0.12, y: 0.40 },
+        { role: 'DF', x: 0.12, y: 0.60 }, { role: 'DF', x: 0.15, y: 0.80 },
+        { role: 'MF', x: 0.35, y: 0.15 }, { role: 'MF', x: 0.28, y: 0.35 },
+        { role: 'MF', x: 0.28, y: 0.65 }, { role: 'MF', x: 0.35, y: 0.85 },
+        { role: 'FW', x: 0.45, y: 0.45 }, { role: 'FW', x: 0.45, y: 0.55 }
+      ],
+      '4-3-3': [
+        { role: 'GK', x: 0.05, y: 0.5 },
+        { role: 'DF', x: 0.15, y: 0.20 }, { role: 'DF', x: 0.12, y: 0.40 },
+        { role: 'DF', x: 0.12, y: 0.60 }, { role: 'DF', x: 0.15, y: 0.80 },
+        { role: 'MF', x: 0.25, y: 0.5 }, { role: 'MF', x: 0.35, y: 0.3 }, { role: 'MF', x: 0.35, y: 0.7 },
+        { role: 'FW', x: 0.45, y: 0.2 }, { role: 'FW', x: 0.45, y: 0.8 }, { role: 'FW', x: 0.50, y: 0.5 }
+      ],
+      '3-5-2': [
+        { role: 'GK', x: 0.05, y: 0.5 },
+        { role: 'DF', x: 0.12, y: 0.30 }, { role: 'DF', x: 0.10, y: 0.50 }, { role: 'DF', x: 0.12, y: 0.70 },
+        { role: 'MF', x: 0.25, y: 0.20 }, { role: 'MF', x: 0.25, y: 0.80 }, { role: 'MF', x: 0.25, y: 0.50 },
+        { role: 'MF', x: 0.35, y: 0.35 }, { role: 'MF', x: 0.35, y: 0.65 },
+        { role: 'FW', x: 0.45, y: 0.45 }, { role: 'FW', x: 0.45, y: 0.55 }
+      ]
+    };
+
+    let allPlayers = [];
+    let selectedPoolPlayerId = null;
+    let currentLineup = new Array(11).fill(null); // Array of Player IDs
+
+    // --- Tab Logic ---
+    window.switchTab = (tab) => {
+      document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+      document.getElementById('tab-' + tab).classList.add('active');
+      const buttons = document.querySelectorAll('.tab-btn');
+      if (tab === 'squad') buttons[0].classList.add('active');
+      else buttons[1].classList.add('active');
+    };
+
+    // --- Modal Toggle ---
+    window.closeModal = () => {
+      document.getElementById('regModal').style.display = 'none';
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'd' || e.key === 'D') {
+        const modal = document.getElementById('regModal');
+        if (modal.style.display === 'flex') {
+          modal.style.display = 'none';
+        } else {
+          modal.style.display = 'flex';
+          loadData();
+        }
+      }
+    });
+
+    // --- Data Loading ---
+    async function loadData() {
+      try {
+        const res = await fetch('http://localhost:3000/api/players');
+        const data = await res.json();
+        allPlayers = data.players || [];
+
+        // Sort by ID desc (newest first)
+        allPlayers.sort((a, b) => (b.id || 0) - (a.id || 0));
+
+        renderPool();
+
+        // Load Config
+        const configStr = localStorage.getItem('myTeamConfig');
+        if (configStr) {
+          const conf = JSON.parse(configStr);
+          if (conf.formation) document.getElementById('formationSelect').value = conf.formation;
+          if (conf.lineup) currentLineup = conf.lineup;
+        } else {
+          // Initialize empty if null
+          currentLineup = new Array(11).fill(null);
+        }
+        updatePitchLayout();
+      } catch (e) {
+        console.error(e);
+        document.getElementById('playerPoolList').innerText = "Failed to load players.";
+      }
+    }
+
+    function renderPool() {
+      const list = document.getElementById('playerPoolList');
+      list.innerHTML = '';
+
+      allPlayers.forEach(p => {
+        const div = document.createElement('div');
+        div.className = 'pool-item';
+        div.innerHTML = `<span><b>${p.number}</b> ${p.name}</span> <small>${p.role}</small>`;
+        div.onclick = () => {
+          document.querySelectorAll('.pool-item').forEach(el => el.classList.remove('selected'));
+          div.classList.add('selected');
+          selectedPoolPlayerId = p.id;
+        };
+        list.appendChild(div);
+      });
+    }
+
+    // --- Pitch Logic ---
+    window.updatePitchLayout = () => {
+      const fmtName = document.getElementById('formationSelect').value;
+      const nodes = UIFormations[fmtName] || UIFormations['4-4-2'];
+      const container = document.getElementById('pitchContainer');
+      container.innerHTML = '';
+
+      // Ensure lineup matches size? 11 always.
+
+      nodes.forEach((node, i) => {
+        const slot = document.createElement('div');
+        slot.className = 'pitch-slot';
+        // Scale and Translate for Pitch View
+        // UI Pitch is abstract (0-1).
+        slot.style.left = (node.x * 100) + '%';
+        slot.style.top = (node.y * 100) + '%';
+
+        const filledId = currentLineup[i];
+        let label = node.role;
+
+        if (filledId) {
+          const player = allPlayers.find(p => p.id === filledId);
+          if (player) {
+            slot.classList.add('filled');
+            label = `<div style='line-height:1.0'><b>${player.number}</b><br>${player.name.substring(0, 6)}</div>`;
+          }
+        }
+
+        slot.innerHTML = label;
+
+        slot.onclick = () => {
+          if (selectedPoolPlayerId) {
+            currentLineup[i] = selectedPoolPlayerId;
+            selectedPoolPlayerId = null;
+            document.querySelectorAll('.pool-item').forEach(el => el.classList.remove('selected'));
+            updatePitchLayout();
+          } else {
+            // Click to clear
+            if (currentLineup[i]) {
+              currentLineup[i] = null;
+              updatePitchLayout();
+            }
+          }
+        };
+
+        container.appendChild(slot);
+      });
+    };
+
+    // --- Save ---
+    window.saveSquad = () => {
+      const fmt = document.getElementById('formationSelect').value;
+      const config = {
+        formation: fmt,
+        lineup: currentLineup
+      };
+      localStorage.setItem('myTeamConfig', JSON.stringify(config));
+      location.reload();
+    };
+
+    window.clearSquad = () => {
+      currentLineup = new Array(11).fill(null);
+      updatePitchLayout();
+    };
+
+    // --- Registration Submit ---
+    document.getElementById('regForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const formData = new FormData(e.target);
+      const data = {
+        name: formData.get('name'),
+        teamId: Number(formData.get('teamId')),
+        role: formData.get('role'),
+        number: Number(formData.get('number')),
+        stats: {
+          speed: Number(formData.get('speed')),
+          kickPower: Number(formData.get('kickPower')),
+          stamina: Number(formData.get('stamina')),
+          technique: Number(formData.get('technique'))
+        }
+      };
+
+      try {
+        await fetch('http://localhost:3000/api/players', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        alert("Registered! Switch to Squad tab to add them.");
+        e.target.reset();
+        loadData(); // Refresh pool
+      } catch (e) {
+        alert("Error: " + e.message);
+      }
+    });
+
+    // --- Init ---
+    document.getElementById('regModal').style.display = 'none';
+  </script>
 </body>
 
 </html>
