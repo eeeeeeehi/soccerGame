@@ -1,0 +1,172 @@
+{
+    "teams": [
+        {
+            "id": 1,
+            "name": "Blue Lock",
+            "color": "#3b82f6"
+        },
+        {
+            "id": 2,
+            "name": "Red Devils",
+            "color": "#ef4444"
+        }
+    ],
+    "players": [
+        {
+            "teamId": 1,
+            "name": "Isagi",
+            "number": 11,
+            "role": "FW",
+            "stats": {
+                "speed": 85,
+                "kick_power": 80,
+                "stamina": 90,
+                "technique": 85
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Bachira",
+            "number": 8,
+            "role": "MF",
+            "stats": {
+                "speed": 88,
+                "kick_power": 75,
+                "stamina": 85,
+                "technique": 95
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Kunigami",
+            "number": 9,
+            "role": "FW",
+            "stats": {
+                "speed": 82,
+                "kick_power": 95,
+                "stamina": 88,
+                "technique": 70
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Chigiri",
+            "number": 44,
+            "role": "MF",
+            "stats": {
+                "speed": 98,
+                "kick_power": 70,
+                "stamina": 80,
+                "technique": 75
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Raichi",
+            "number": 4,
+            "role": "DF",
+            "stats": {
+                "speed": 75,
+                "kick_power": 75,
+                "stamina": 99,
+                "technique": 60
+            }
+        },
+        {
+            "teamId": 1,
+            "name": "Gagamaru",
+            "number": 1,
+            "role": "GK",
+            "stats": {
+                "speed": 70,
+                "kick_power": 80,
+                "stamina": 90,
+                "technique": 60
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Rin",
+            "number": 10,
+            "role": "FW",
+            "stats": {
+                "speed": 90,
+                "kick_power": 90,
+                "stamina": 90,
+                "technique": 90
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Barou",
+            "number": 13,
+            "role": "FW",
+            "stats": {
+                "speed": 85,
+                "kick_power": 92,
+                "stamina": 85,
+                "technique": 80
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Nagi",
+            "number": 7,
+            "role": "MF",
+            "stats": {
+                "speed": 75,
+                "kick_power": 85,
+                "stamina": 70,
+                "technique": 99
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Reo",
+            "number": 14,
+            "role": "MF",
+            "stats": {
+                "speed": 85,
+                "kick_power": 85,
+                "stamina": 85,
+                "technique": 85
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Aiku",
+            "number": 5,
+            "role": "DF",
+            "stats": {
+                "speed": 82,
+                "kick_power": 80,
+                "stamina": 90,
+                "technique": 80
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Aryu",
+            "number": 2,
+            "role": "DF",
+            "stats": {
+                "speed": 80,
+                "kick_power": 75,
+                "stamina": 88,
+                "technique": 70
+            }
+        },
+        {
+            "teamId": 2,
+            "name": "Gen",
+            "number": 1,
+            "role": "GK",
+            "stats": {
+                "speed": 60,
+                "kick_power": 85,
+                "stamina": 80,
+                "technique": 50
+            }
+        }
+    ]
+}

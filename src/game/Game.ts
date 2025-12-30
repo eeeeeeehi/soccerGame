@@ -3,8 +3,9 @@ import { Input } from './Input';
 import { Ball } from './entities/Ball';
 import { Team } from './entities/Team';
 import { Vector2 } from './utils/Vector2';
+import { Camera } from './Camera';
 
-type GameState = 'KICKOFF' | 'PLAYING' | 'GOAL';
+type GameState = 'KICKOFF' | 'PLAYING' | 'GOAL' | 'THROW_IN' | 'CORNER_KICK' | 'GOAL_KICK';
 
 export class Game {
     private canvas: HTMLCanvasElement;
@@ -19,7 +20,13 @@ export class Game {
     private score: { p1: number, p2: number } = { p1: 0, p2: 0 };
     private goalTimer: number = 0;
 
+    // Set Piece Info
+    private setPieceTeamId: number = 0;
+    private setPieceTimer: number = 0;
+
     private lastTime: number = 0;
+
+    private camera: Camera;
 
     constructor(containerId: string) {
         const container = document.getElementById(containerId);
@@ -34,6 +41,7 @@ export class Game {
 
         this.ctx = this.canvas.getContext('2d')!;
         this.input = new Input();
+        this.camera = new Camera();
 
         this.initEntities();
 
@@ -62,9 +70,6 @@ export class Game {
 
     update() {
         if (this.state === 'KICKOFF') {
-            // Wait for input to start? Or just start?
-            // Let's allow moving immediately, switching to PLAYING once ball moves or input press
-            // For now, if space is pressed, start.
             if (this.input.isDown('Space') || this.input.isDown('ArrowUp') || this.input.isDown('ArrowDown') || this.input.isDown('ArrowLeft') || this.input.isDown('ArrowRight')) {
                 this.state = 'PLAYING';
             }
@@ -78,7 +83,39 @@ export class Game {
             // Check collisions between teams
             this.team1.checkCollisionWithTeam(this.team2);
 
-            this.checkGoal();
+            this.checkBounds(); // Handles Goals and Set Pieces
+
+            // Camera follow
+            this.camera.zoom = 1.2;
+            this.camera.follow(this.ball.position);
+        }
+
+        // Handling Set Pieces (Simple Wait for Input)
+        if (['THROW_IN', 'CORNER_KICK', 'GOAL_KICK'].includes(this.state)) {
+            // Reposition players if needed (once)
+            // Just wait for pass/shoot to resume
+            if (this.input.isDown('Space') || this.input.isDown('KeyX') || this.input.isDown('KeyC')) {
+                this.state = 'PLAYING';
+            }
+
+            // Allow some movement behind the ball? For simplicity, frozen until kick.
+            // Actually, let's allow the controlling player to aim.
+            // Just run update logic for the kicking team?
+            this.ball.velocity = new Vector2(0, 0); // Freeze ball
+            // Update team 1 so human can aim (if it's their turn)
+            if (this.setPieceTeamId === 1) {
+                this.team1.update(this.ball, this.team2); // Updates rotation/aim but ball is frozen
+            } else {
+                // AI Delay then kick
+                this.setPieceTimer++;
+                if (this.setPieceTimer > 60) {
+                    // AI Kick logic (random direction back into play)
+                    const target = this.team2.id === 1 ? new Vector2(Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT / 2) : new Vector2(0, Constants.FIELD_HEIGHT / 2);
+                    const kickDir = target.sub(this.ball.position).normalize();
+                    this.ball.velocity = kickDir.mult(10);
+                    this.state = 'PLAYING';
+                }
+            }
         }
 
         if (this.state === 'GOAL') {
@@ -89,31 +126,149 @@ export class Game {
         }
     }
 
-    checkGoal() {
-        // Goal detection
-        // Simple X check + Y range
-        const inGoalRange = this.ball.position.y > (Constants.FIELD_HEIGHT - Constants.GOAL_HEIGHT) / 2 &&
-            this.ball.position.y < (Constants.FIELD_HEIGHT + Constants.GOAL_HEIGHT) / 2;
+    checkBounds() {
+        const p = this.ball.position;
+        const r = this.ball.radius;
+        const w = Constants.FIELD_WIDTH;
+        const h = Constants.FIELD_HEIGHT;
+        const goalTop = (Constants.FIELD_HEIGHT - Constants.GOAL_HEIGHT) / 2;
+        const goalBottom = (Constants.FIELD_HEIGHT + Constants.GOAL_HEIGHT) / 2;
+        const inGoalRange = p.y > goalTop && p.y < goalBottom;
 
-        if (this.ball.position.x < 5 && inGoalRange) { // < 5 to be sure it's in
+        // GOAL CHECK
+        if (p.x < -r && inGoalRange) {
             console.log("Goal Team 2!");
             this.score.p2++;
             this.state = 'GOAL';
             this.goalTimer = 0;
-            // Force ball out to avoid double triggers?
-            // Actually change state usually prevents update loop from calling checkGoal again if we guard it.
+            return;
         }
-        if (this.ball.position.x > Constants.FIELD_WIDTH - 5 && inGoalRange) {
+        if (p.x > w + r && inGoalRange) {
             console.log("Goal Team 1!");
             this.score.p1++;
             this.state = 'GOAL';
             this.goalTimer = 0;
+            return;
+        }
+
+        // OUT OF BOUNDS CHECK
+        let out = false;
+        let type: GameState = 'PLAYING';
+
+        // SIDE LINE (Top/Bottom) -> Throw In
+        if (p.y < -r || p.y > h + r) {
+            out = true;
+            type = 'THROW_IN';
+        }
+
+        // END LINE (Left/Right) -> Corner or Goal Kick
+        else if ((p.x < -r || p.x > w + r) && !inGoalRange) {
+            out = true;
+            // Who touched last?
+            // If Left Side (Team 1 Goal): 
+            //   Last Touch Team 1 (Def) -> Corner Kick (for T2)
+            //   Last Touch Team 2 (Att) -> Goal Kick (for T1)
+
+            // If Right Side (Team 2 Goal):
+            //   Last Touch Team 2 (Def) -> Corner Kick (for T1)
+            //   Last Touch Team 1 (Att) -> Goal Kick (for T2)
+
+            const lastId = this.ball.lastTouch || 0;
+            const side = p.x < 0 ? 'LEFT' : 'RIGHT';
+
+            if (side === 'LEFT') {
+                if (lastId === 1) type = 'CORNER_KICK'; // Self goal line touch
+                else type = 'GOAL_KICK';
+            } else {
+                if (lastId === 2) type = 'CORNER_KICK';
+                else type = 'GOAL_KICK';
+            }
+        }
+
+        if (out) {
+            // Determine whose ball it is
+            // Throw In: Opposite of last touch
+            // Corner: Attackers (Opposite of side owner)
+            // Goal Kick: Defenders (Side owner)
+
+            let pos = p.clone();
+            // Clamp Position to line
+            if (pos.x < 0) pos.x = 0;
+            if (pos.x > w) pos.x = w;
+            if (pos.y < 0) pos.y = 0;
+            if (pos.y > h) pos.y = h;
+
+            let teamId = (this.ball.lastTouch === 1) ? 2 : 1; // Default swap
+
+            if (type === 'GOAL_KICK') {
+                // Goal Kick is taken by the defender of that side
+                teamId = (p.x < w / 2) ? 1 : 2;
+                // Place ball at corner of 6-yard box (approx)
+                const boxX = (teamId === 1) ? 50 : w - 50;
+                pos = new Vector2(boxX, h / 2);
+            } else if (type === 'CORNER_KICK') {
+                // Corner taken by attacker
+                teamId = (p.x < w / 2) ? 2 : 1;
+                // Place at corner
+                const cornerX = (p.x < w / 2) ? 0 : w;
+                const cornerY = (p.y < h / 2) ? 0 : h;
+                pos = new Vector2(cornerX, cornerY);
+            }
+
+            this.setSetPiece(type, teamId, pos);
+        }
+    }
+
+    setSetPiece(type: GameState, teamId: number, pos: Vector2) {
+        this.state = type;
+        this.setPieceTeamId = teamId;
+        this.ball.position = pos;
+        this.ball.velocity = new Vector2(0, 0);
+        this.setPieceTimer = 0;
+
+        // Reposition players
+
+        // Logic check:
+        // Corner: Attacking team takes it.
+        // Goal Kick: Defending team takes it (but they are "Attacking" in possession sense?)
+        // Let's pass "Taking Set Piece" as context.
+
+        this.team1.resetForSetPiece(type, pos, teamId === 1);
+        this.team2.resetForSetPiece(type, pos, teamId === 2);
+
+        // Move kicker to ball
+        const team = (teamId === 1) ? this.team1 : this.team2;
+        // Find closest to ball of that team and move them there
+        let bestP = team.players[0];
+        let minD = Infinity;
+        team.players.forEach(p => {
+            const d = p.position.dist(pos); // Use current pos (which was just reset, roughly)
+            if (d < minD) { minD = d; bestP = p; }
+        });
+
+        // Ensure kicker is close
+        bestP.position = pos.clone();
+        // nudge back slightly so they can kick
+        const center = new Vector2(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
+        const dir = center.sub(pos).normalize();
+
+        // CORNER override: Place exactly at corner?
+        // THROW IN: On line
+        // GOAL KICK: In box
+
+        bestP.position = bestP.position.add(dir.mult(-15)); // Back up 15px
+
+        // Force kicker selection if human
+        if (teamId === 1) {
+            team.players.forEach(p => p.isSelected = false);
+            bestP.isSelected = true;
         }
     }
 
     resetKickoff() {
         this.ball.position = new Vector2(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
         this.ball.velocity = new Vector2(0, 0);
+        this.ball.lastTouch = 0;
 
         this.team1.reset();
         this.team2.reset();
@@ -125,18 +280,34 @@ export class Game {
     draw() {
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
+        // Apply Camera for World
+        this.camera.apply(this.ctx);
+
         this.drawField();
 
         this.team1.draw(this.ctx);
         this.team2.draw(this.ctx);
         this.ball.draw(this.ctx); // Draw ball last
 
+        this.camera.unapply(this.ctx);
+
+        // Draw UI (Static)
         this.drawUI();
     }
 
     drawField() {
+        // 1. Grass Stripes
+        const stripWidth = 100;
+        for (let x = 0; x < Constants.FIELD_WIDTH; x += stripWidth) {
+            this.ctx.fillStyle = (x / stripWidth) % 2 === 0 ? '#4ade80' : '#22c55e'; // Light vs Dark Green
+            this.ctx.fillRect(x, 0, stripWidth, Constants.FIELD_HEIGHT);
+        }
+
         this.ctx.strokeStyle = 'white';
         this.ctx.lineWidth = 2;
+
+        // Outer Boundary
+        this.ctx.strokeRect(0, 0, Constants.FIELD_WIDTH, Constants.FIELD_HEIGHT);
 
         // Center line
         this.ctx.beginPath();
@@ -146,15 +317,70 @@ export class Game {
 
         // Center circle
         this.ctx.beginPath();
-        this.ctx.arc(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2, 50, 0, Math.PI * 2);
+        this.ctx.arc(Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2, 70, 0, Math.PI * 2);
         this.ctx.stroke();
 
-        // Goals
-        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        const goalY = (Constants.FIELD_HEIGHT - Constants.GOAL_HEIGHT) / 2;
-        this.ctx.fillRect(0, goalY, 5, Constants.GOAL_HEIGHT);
-        this.ctx.fillRect(Constants.FIELD_WIDTH - 5, goalY, 5, Constants.GOAL_HEIGHT);
+        // Penalty Areas (Optional simple boxes)
+        // Left
+        this.ctx.strokeRect(0, (Constants.FIELD_HEIGHT - 400) / 2, 150, 400);
+        // Right
+        this.ctx.strokeRect(Constants.FIELD_WIDTH - 150, (Constants.FIELD_HEIGHT - 400) / 2, 150, 400);
+
+
+        // Goals (Nets)
+        this.drawGoal(0, true); // Left
+        this.drawGoal(Constants.FIELD_WIDTH, false); // Right
     }
+
+    drawGoal(x: number, isLeft: boolean) {
+        const h = Constants.GOAL_HEIGHT;
+        const y = (Constants.FIELD_HEIGHT - h) / 2;
+        const d = 40; // Depth of goal
+
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+        this.ctx.lineWidth = 2;
+
+        // Posts
+        const frontX = x;
+        const backX = isLeft ? x - d : x + d;
+
+        // Top and Bottom Frames
+        this.ctx.beginPath();
+        this.ctx.moveTo(frontX, y); // Top Front
+        this.ctx.lineTo(backX, y);   // Top Back
+        this.ctx.lineTo(backX, y + h); // Bottom Back
+        this.ctx.lineTo(frontX, y + h); // Bottom Front
+        this.ctx.stroke();
+
+        // Net (Crosshatch)
+        this.ctx.beginPath();
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.lineWidth = 1;
+
+        // Horizontal lines
+        for (let i = 0; i <= h; i += 10) {
+            this.ctx.moveTo(frontX, y + i);
+            this.ctx.lineTo(backX, y + i);
+        }
+        // Vertical lines (Side)
+        for (let i = 0; i <= d; i += 10) {
+            const bx = isLeft ? frontX - i : frontX + i;
+            this.ctx.moveTo(bx, y);
+            this.ctx.lineTo(bx, y + h);
+        }
+        this.ctx.stroke();
+
+        // Draw Post Lines again for clarity
+        this.ctx.strokeStyle = 'white';
+        this.ctx.lineWidth = 3;
+        this.ctx.beginPath();
+        this.ctx.moveTo(frontX, y);
+        this.ctx.lineTo(frontX, y + h);
+        this.ctx.stroke();
+    }
+
+    private showHelp: boolean = true;
+    private helpToggleTimer: number = 0;
 
     drawUI() {
         this.ctx.font = '30px Arial';
@@ -172,6 +398,60 @@ export class Game {
             this.ctx.font = '20px Arial';
             this.ctx.fillStyle = 'rgba(255,255,255,0.8)';
             this.ctx.fillText("Press Arrow Keys to Start", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 + 80);
+        }
+
+        if (['THROW_IN', 'CORNER_KICK', 'GOAL_KICK'].includes(this.state)) {
+            const text = this.state.replace('_', ' ');
+            const teamName = this.setPieceTeamId === 1 ? "BLUE" : "RED";
+            const color = this.setPieceTeamId === 1 ? "#3b82f6" : "#ef4444";
+
+            this.ctx.font = '40px Arial';
+            this.ctx.fillStyle = color;
+            this.ctx.fillText(`${text} (${teamName})`, Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2 - 50);
+
+            this.ctx.font = '20px Arial';
+            this.ctx.fillStyle = 'white';
+            if (this.setPieceTeamId === 1) {
+                this.ctx.fillText("Press X or C to Pass/Shoot", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
+            } else {
+                this.ctx.fillText("Waiting for CPU...", Constants.FIELD_WIDTH / 2, Constants.FIELD_HEIGHT / 2);
+            }
+        }
+
+        // Toggle Help
+        if (this.input.isDown('Digit0') && this.helpToggleTimer <= 0) {
+            this.showHelp = !this.showHelp;
+            this.helpToggleTimer = 20; // Debounce
+        }
+        if (this.helpToggleTimer > 0) this.helpToggleTimer--;
+
+        if (this.showHelp) {
+            const x = 20;
+            const y = 20;
+            const w = 250;
+            const h = 220;
+
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            this.ctx.fillRect(x, y, w, h);
+
+            this.ctx.textAlign = 'left';
+            this.ctx.fillStyle = '#ffffff';
+            this.ctx.font = '16px monospace';
+
+            let ly = y + 25;
+            const lh = 22;
+            this.ctx.fillText("[0] Toggle Help", x + 10, ly); ly += lh;
+            this.ctx.fillText("Arrows: Move", x + 10, ly); ly += lh;
+            this.ctx.fillText("Shift : Sprint", x + 10, ly); ly += lh;
+            this.ctx.fillText("Z     : Tackle", x + 10, ly); ly += lh;
+            this.ctx.fillText("Space : Shoot (Hold)", x + 10, ly); ly += lh;
+            this.ctx.fillText("X     : Pass", x + 10, ly); ly += lh;
+            this.ctx.fillText("C     : Through Ball", x + 10, ly); ly += lh;
+        } else {
+            this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            this.ctx.font = '14px monospace';
+            this.ctx.textAlign = 'left';
+            this.ctx.fillText("Press 0 for Help", 20, 30);
         }
     }
 }

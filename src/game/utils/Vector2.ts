@@ -36,6 +36,10 @@ export class Vector2 {
     return this; // Return this if not limited
   }
 
+  dot(v: Vector2): number {
+    return this.x * v.x + this.y * v.y;
+  }
+
   dist(v: Vector2): number {
     const dx = this.x - v.x;
     const dy = this.y - v.y;
